@@ -174,3 +174,8 @@ Android's `KEYCODE_VOLUME_UP` / `KEYCODE_VOLUME_DOWN` are **left unconsumed**; `
 The next GitHub Actions log (`logs_107179239559.zip`) confirms Gradle toolchain verification, clean Dart analysis, and **11 passing tests**, but the release build failed during `:app:minifyReleaseWithR8` because OEM-provided `androidx.window.extensions` and `androidx.window.sidecar` classes were missing. Added **scoped** `-dontwarn` rules in `android/app/proguard-rules.pro` and linked them in the release Gradle config. Full details: [BUILD_FIX_R8_2026-10-21.md](BUILD_FIX_R8_2026-10-21.md).
 
 No blanket `-ignorewarnings` or R8 disablement is used. The 513-channel JSON snapshot has not changed. The follow-up release build still needs validation in GitHub Actions.
+
+
+## Android TV `SharedPreferencesApiRegistrar.getAll` startup crash — 2026-10-21
+
+Android release startup bug in `shared_preferences_android` 2.5.0 fixed by pinning **2.4.28** and adding targeted Kotlin R8 keep rules. CI checks the resolved version to prevent regression. See [`FIX_ANDROID_TV_SHARED_PREFS_BN.md`](FIX_ANDROID_TV_SHARED_PREFS_BN.md) for Bengali testing instructions. GitHub `channels.json` stays the primary, auto-refreshed source.

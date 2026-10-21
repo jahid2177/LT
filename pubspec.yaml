@@ -1,7 +1,7 @@
 name: live_tv_remote
 description: Remote-first Flutter IPTV application for Android TV (user-provided, authorized M3U streams).
 publish_to: none
-version: 1.1.1+3
+version: 1.1.2+4
 
 environment:
   sdk: '>=3.12.0 <4.0.0'
@@ -11,6 +11,9 @@ dependencies:
     sdk: flutter
   video_player: ^2.14.1
   shared_preferences: ^2.5.6
+  # 2.5.0 has a release-only JNI/R8 NoSuchMethodError in getAll on Android TV.
+  # Pin the endorsed Android implementation until an upstream fix is verified.
+  shared_preferences_android: 2.4.28
   file_picker: ^13.1.0
 
 dev_dependencies:
