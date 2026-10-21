@@ -39,8 +39,9 @@ Android TV / Google TV-এর জন্য **remote-first IPTV Live TV app**, wr
 - Manual refresh and explicit restore of the bundled snapshot from Manage channels
 - Favorite/unfavorite, favorites-only guide, last channel on relaunch
 - Stream loading/error and retry UI
+- **Keep Screen Awake while watching Live TV** (native Android `FLAG_KEEP_SCREEN_ON`); releases automatically when app is backgrounded or no channel is playing. See [`KEEP_SCREEN_AWAKE_BN.md`](KEEP_SCREEN_AWAKE_BN.md). Some Android 11 TVs have a separate system-wide auto-standby setting that apps cannot override.
 - Demo M3U with sample test videos for checking the playback pipeline (these are **not live TV channels**)
-- GitHub Actions: static analysis, unit tests, build an **ARM64 release APK**, upload as downloadable artifact
+- GitHub Actions: static analysis, unit tests, build a **universal ARM32 + ARM64 release APK**, upload as downloadable artifact
 
 ## Remote controls
 

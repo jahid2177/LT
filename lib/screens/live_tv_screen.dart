@@ -10,6 +10,7 @@ import '../services/channel_identity.dart';
 import '../services/playlist_repository.dart';
 import '../services/crash_reporter.dart';
 import '../services/guide_focus_navigation.dart';
+import '../services/screen_awake_policy.dart';
 import 'playlist_dialog.dart';
 
 class LiveTvScreen extends StatefulWidget {
@@ -21,6 +22,32 @@ class LiveTvScreen extends StatefulWidget {
 
 class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver {
   static const _remote = MethodChannel('livetv_remote/keys');
+  static const _screenAwake = MethodChannel('livetv_remote/screen_awake');
+  bool? _lastScreenAwakeRequest;
+
+  bool get _keepAwakeDesired => shouldKeepScreenAwake(
+        appIsForeground: _foreground,
+        channelSelected: _currentIndex >= 0,
+        waitingForVideo: _playerLoading,
+        playerAttached: _controller != null,
+        hasPlaybackError: _playerError != null,
+      );
+
+  void _syncScreenAwake({bool force = false}) {
+    final enabled = _keepAwakeDesired;
+    if (!force && _lastScreenAwakeRequest == enabled) return;
+    _lastScreenAwakeRequest = enabled;
+    unawaited(_requestScreenAwake(enabled));
+  }
+
+  Future<void> _requestScreenAwake(bool enabled) async {
+    try {
+      await _screenAwake.invokeMethod<void>('setKeepAwake', enabled);
+    } catch (error, stack) {
+      // A missing MethodChannel should not crash video playback.
+      CrashReporter.error('Keep Screen On', error, stack);
+    }
+  }
 
   final _repository = PlaylistRepository();
   final _focus = FocusNode(debugLabel: 'TV remote input');
@@ -93,6 +120,7 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _foreground = state == AppLifecycleState.resumed;
+    _syncScreenAwake();
     if (_foreground && _playlistUrl == PlaylistRepository.defaultChannelsUrl &&
         (_lastSyncCheck == null ||
          DateTime.now().difference(_lastSyncCheck!) > const Duration(seconds: 30))) {
@@ -149,6 +177,7 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
       _infoVisible = false;
     });
     _ensureHighlightedVisible();
+    _syncScreenAwake();
   }
 
   Future<void> _restore() async {
@@ -369,6 +398,7 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
         _drawerVisible = false;
       }
     });
+    _syncScreenAwake();
     if (matchedKey != null) _preferredId = matchedKey;
     if (!fromRefresh) {
       _githubEtag = null;
@@ -440,6 +470,7 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
       _drawerVisible = false;
       _numberBuffer = '';
     });
+    _syncScreenAwake(); // Keep TV on while the stream loads, even before video frames arrive.
     final identity = stableChannelKey(_channels, target);
     _preferredId = identity;
     _preferredUrl = item.url;
@@ -451,6 +482,7 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
         _playerLoading = false;
         _playerError = 'Invalid HTTP(S) channel URL';
       });
+      _syncScreenAwake();
       _queuePlayerCleanup();
       return;
     }
@@ -505,6 +537,7 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
             _playerError = player.value.errorDescription ?? 'Stream playback error.';
             _playerLoading = false;
           });
+          _syncScreenAwake();
         }
       });
       await player.initialize().timeout(const Duration(seconds: 20));
@@ -513,6 +546,7 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
         _controller = next;
         _playerLoading = false;
       });
+      _syncScreenAwake();
       await player.play();
       ready = true;
       CrashReporter.stage('Native video player playback started');
@@ -525,6 +559,7 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
           _playerLoading = false;
           _controller = null;
         });
+        _syncScreenAwake();
       }
     } finally {
       if (!ready && next != null) {
@@ -751,6 +786,7 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
     _infoTimer?.cancel();
     _numberTimer?.cancel();
     _playbackGeneration++;
+    unawaited(_requestScreenAwake(false));
     _remote.setMethodCallHandler(null);
     _queuePlayerCleanup();
     _focus.dispose();
