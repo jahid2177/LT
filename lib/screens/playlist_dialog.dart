@@ -96,9 +96,9 @@ class _PlaylistDialogState extends State<PlaylistDialog> {
         final text = await widget.repository.loadBundledChannels();
         return PlaylistSelection(
           text: text,
-          // Keep fetching the online feed next launch; use saved snapshot on
-          // startup even if the server cannot currently be reached.
-          url: PlaylistRepository.defaultChannelsUrl,
+          // This is an explicitly selected local backup, NOT data fetched
+          // from GitHub. Do not store it with the online source URL.
+          url: null,
           channels: widget.repository.parse(text),
         );
       });

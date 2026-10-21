@@ -82,6 +82,7 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
   String? _preferredId;
   String? _githubEtag;
   bool _hasValidatedOnlineCache = false;
+  Set<String> _legacyFavoriteUrls = <String>{};
   bool _foreground = true;
   bool _onlineConfirmed = false;
   DateTime? _lastSyncCheck;
@@ -191,80 +192,80 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
     _syncScreenAwake();
   }
 
+  /// GitHub wins on every launch: cached or bundled snapshots are displayed
+  /// only if the network fetch fails. A stored snapshot is not a second source.
   Future<void> _restore() async {
-    CrashReporter.stage('Channel cache restore begin');
+    CrashReporter.stage('GitHub-first catalog startup');
+    const sourceUrl = PlaylistRepository.defaultChannelsUrl;
+    _playlistUrl = sourceUrl;
     try {
       final cached = await _repository.loadText();
       final storedUrl = await _repository.loadUrl();
-      final last = await _repository.loadLastChannelUrl();
-      final lastId = await _repository.loadLastChannelId();
-      final oldFavorites = await _repository.loadFavorites();
-      final favorites = await _repository.loadFavoriteIds();
+      _preferredUrl = await _repository.loadLastChannelUrl();
+      _preferredId = await _repository.loadLastChannelId();
+      _legacyFavoriteUrls = await _repository.loadFavorites();
+      _favorites = await _repository.loadFavoriteIds();
       if (!mounted) return;
-
-      // GitHub is ALWAYS the primary startup source, even after an older
-      // version of the app saved an imported/temporary M3U URL.
-      const sourceUrl = PlaylistRepository.defaultChannelsUrl;
-      _playlistUrl = sourceUrl;
-      _preferredUrl = last;
-      _preferredId = lastId;
-      _favorites = favorites;
-      final compatibleCache = storedUrl == sourceUrl &&
-          cached != null && cached.trim().isNotEmpty;
-      if (compatibleCache) {
+      // Trust only the last successful GitHub catalog, never an imported M3U
+      // or an embedded snapshot saved by an older application version.
+      if (storedUrl == sourceUrl && cached != null && cached.trim().isNotEmpty) {
         try {
-          final channels = _repository.parse(cached, baseUri: Uri.parse(sourceUrl));
-          _githubEtag = await _repository.loadGithubEtag();
-          _hasValidatedOnlineCache = true;
-          if (!mounted) return;
+          _repository.parse(cached, baseUri: Uri.parse(sourceUrl));
           _cachedPlaylistText = cached;
-          setState(() {
-            _channels = channels;
-            _loading = false;
-          });
-          _restoreFavoriteIdentities(oldFavorites);
-          _showStartupGuide(_savedIndex(channels));
+          // Earlier builds could save the embedded snapshot under the GitHub
+          // URL. Always force a full HTTP 200 on each new app launch before
+          // accepting any ETag/304 response. This prevents stale snapshots
+          // from being silently treated as authoritative online content.
+          _hasValidatedOnlineCache = false;
+          _githubEtag = null;
         } catch (error) {
-          debugPrint('Stored GitHub JSON was invalid: $error');
+          _cachedPlaylistText = null;
+          _githubEtag = null;
+          _hasValidatedOnlineCache = false;
+          CrashReporter.error('Invalid previously saved GitHub cache', error);
         }
       }
-      // Offline fallback is a snapshot only, never the authoritative source.
-      if (_channels.isEmpty) {
-        try {
-          final text = await _repository.loadBundledChannels();
-          final channels = _repository.parse(text);
-          if (!mounted) return;
-          _cachedPlaylistText = text;
-          setState(() {
-            _channels = channels;
-            _loading = false;
-          });
-          _restoreFavoriteIdentities(oldFavorites);
-          _showStartupGuide(_savedIndex(channels));
-        } catch (error) {
-          if (!mounted) return;
-          setState(() {
-            _loading = false;
-            _sourceError = 'Offline fallback cannot be opened: $error';
-          });
-        }
-      }
-      CrashReporter.stage('Channel list displayed; requesting GitHub refresh');
-      // Always check GitHub on launch, including when saved data exists.
-      unawaited(_refreshChannels(sourceUrl));
-    } catch (error) {
-      if (!mounted) return;
-      setState(() {
-        _loading = false;
-        _sourceError = 'Unable to load saved channels: $error';
-      });
-      CrashReporter.error('Channel cache restore', error);
-      // A failed preference read must not prevent a fresh GitHub attempt.
-      unawaited(_refreshChannels(PlaylistRepository.defaultChannelsUrl));
+    } catch (error, stack) {
+      // A device-specific SharedPreferences error must never block fetching
+      // directly from GitHub (especially on 32-bit Android TVs).
+      CrashReporter.error('Preferences read, continuing with GitHub', error, stack);
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _focus.requestFocus();
     });
+    // Do NOT show the bundled 513-channel list before checking GitHub.
+    unawaited(_refreshChannels(sourceUrl));
+  }
+
+  Future<void> _showOfflineCatalog() async {
+    if (!mounted || _channels.isNotEmpty) return;
+    try {
+      final cached = _cachedPlaylistText;
+      final text = cached ?? await _repository.loadBundledChannels();
+      final channels = _repository.parse(
+        text,
+        baseUri: cached == null
+            ? null
+            : Uri.parse(PlaylistRepository.defaultChannelsUrl),
+      );
+      if (!mounted || _channels.isNotEmpty) return;
+      setState(() {
+        _channels = channels;
+        _loading = false;
+        _onlineConfirmed = false;
+      });
+      _restoreFavoriteIdentities(_legacyFavoriteUrls);
+      _showStartupGuide(_savedIndex(channels));
+      CrashReporter.stage(cached == null
+          ? 'Offline bundled fallback displayed'
+          : 'Offline saved GitHub catalog displayed');
+    } catch (error, stack) {
+      CrashReporter.error('Offline channel fallback', error, stack);
+      if (mounted) setState(() {
+        _loading = false;
+        _sourceError = 'Cannot load GitHub or offline channels: $error';
+      });
+    }
   }
 
   Future<void> _refreshChannels(String url) async {
@@ -278,32 +279,63 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
       _sourceError = null;
     });
     try {
+      // A 304 response is meaningful ONLY if we have saved the matching
+      // validated GitHub body. An embedded snapshot must not be used here.
       final result = await _repository.fetchPlaylistWithMetadata(
-        url, etag: primary && _cachedPlaylistText != null ? _githubEtag : null,
+        url,
+        etag: primary && _hasValidatedOnlineCache
+            ? _githubEtag : null,
       );
       if (!mounted || epoch != _selectionEpoch || url != _playlistUrl) return;
       if (result.notModified) {
-        setState(() {
+        if (_channels.isEmpty && _cachedPlaylistText != null) {
+          final channels = _repository.parse(
+            _cachedPlaylistText!, baseUri: Uri.parse(url),
+          );
+          await _setPlaylist(
+            PlaylistSelection(text: _cachedPlaylistText!, url: url, channels: channels),
+            fromRefresh: true,
+          );
+          if (mounted && _currentIndex == -1 && !_drawerVisible) {
+            _restoreFavoriteIdentities(_legacyFavoriteUrls);
+            _showStartupGuide(_savedIndex(channels));
+          }
+        }
+        if (mounted) setState(() {
           _onlineConfirmed = true;
           _loading = false;
         });
         return;
       }
-      final text = result.text!;
-      final channels = _repository.parse(text, baseUri: Uri.parse(url));
+      final content = result.text;
+      if (content == null) {
+        throw const FormatException('GitHub returned no channel data.');
+      }
+      // An empty/invalid GitHub catalog never replaces the last valid list.
+      final channels = _repository.parse(content, baseUri: Uri.parse(url));
       if (!mounted || epoch != _selectionEpoch || url != _playlistUrl) return;
-      if (_cachedPlaylistText != text || _channels.isEmpty ||
-          (primary && !_hasValidatedOnlineCache)) {
+      final needsUpdate = _cachedPlaylistText != content || _channels.isEmpty ||
+          (primary && !_hasValidatedOnlineCache);
+      if (needsUpdate) {
         await _setPlaylist(
-          PlaylistSelection(text: text, url: url, channels: channels),
+          PlaylistSelection(text: content, url: url, channels: channels),
           fromRefresh: true,
         );
+        if (mounted && _currentIndex == -1 && !_drawerVisible) {
+          _restoreFavoriteIdentities(_legacyFavoriteUrls);
+          _showStartupGuide(_savedIndex(channels));
+        }
       }
       if (!mounted || epoch != _selectionEpoch || url != _playlistUrl) return;
       if (primary) {
         _hasValidatedOnlineCache = true;
         _githubEtag = result.etag;
-        await _repository.storeGithubEtag(result.etag);
+        try {
+          await _repository.storeGithubEtag(result.etag);
+        } catch (error) {
+          // Disk/prefs failures do not invalidate the successfully fetched feed.
+          CrashReporter.error('Could not persist GitHub ETag', error);
+        }
       }
       CrashReporter.stage('GitHub JSON refresh successful');
       if (mounted) setState(() {
@@ -314,37 +346,15 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
       CrashReporter.error('GitHub JSON fetch failure', error, stack);
       if (mounted && epoch == _selectionEpoch && url == _playlistUrl) {
         setState(() {
-          _loading = false;
+          _onlineConfirmed = false;
           _sourceError = 'GitHub update failed: $error';
         });
+        // Use a saved GitHub catalog, or on first install the bundled JSON,
+        // only after the primary online fetch failed.
+        await _showOfflineCatalog();
       }
     } finally {
       if (mounted) setState(() => _refreshing = false);
-    }
-  }
-
-  Future<void> _useBundledChannels() async {
-    try {
-      final text = await _repository.loadBundledChannels();
-      final channels = _repository.parse(text);
-      if (!mounted) return;
-      await _setPlaylist(PlaylistSelection(
-        text: text,
-        url: PlaylistRepository.defaultChannelsUrl,
-        channels: channels,
-      ));
-    } catch (error) {
-      if (mounted) setState(() => _playerError = 'Bundled channels failed: $error');
-    }
-  }
-
-  Future<void> _useDemo() async {
-    try {
-      final text = await rootBundle.loadString('assets/demo_playlist.m3u');
-      final channels = _repository.parse(text);
-      await _setPlaylist(PlaylistSelection(text: text, channels: channels));
-    } catch (error) {
-      if (mounted) setState(() => _playerError = 'Demo failed: $error');
     }
   }
 
@@ -436,7 +446,11 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
       final first = matchingIndex < 0 ? 0 : matchingIndex;
       _tune(first);
     }
-    await _repository.storePlaylist(selection.text, url: selection.url);
+    try {
+      await _repository.storePlaylist(selection.text, url: selection.url);
+    } catch (error, stack) {
+      CrashReporter.error('Could not cache channel catalog', error, stack);
+    }
   }
 
   Future<void> _openSettings() async {
@@ -908,7 +922,16 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
 
   Widget _buildPlayer() {
     if (_loading) {
-      return const Center(child: CircularProgressIndicator());
+      return const Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            CircularProgressIndicator(),
+            SizedBox(height: 18),
+            Text('Loading channels from GitHub...'),
+          ],
+        ),
+      );
     }
     if (_channels.isEmpty) {
       return DecoratedBox(
@@ -953,20 +976,10 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
                         icon: const Icon(Icons.refresh),
                         label: const Text('Retry online channels'),
                       ),
-                    OutlinedButton.icon(
-                      onPressed: _useBundledChannels,
-                      icon: const Icon(Icons.offline_pin),
-                      label: const Text('Load 513 bundled channels'),
-                    ),
-                    OutlinedButton.icon(
-                      onPressed: _useDemo,
-                      icon: const Icon(Icons.ondemand_video),
-                      label: const Text('Load playback demo'),
-                    ),
                   ],
                 ),
                 const SizedBox(height: 20),
-                const Text('The demo streams are sample videos, not live TV channels.',
+                const Text('Channels are loaded from GitHub. A saved offline copy is used only if the connection fails.',
                     textAlign: TextAlign.center,
                     style: TextStyle(color: Color(0xFF93A0B8))),
                 if (_sourceError != null)

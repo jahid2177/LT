@@ -1,10 +1,12 @@
+> **v1.1.8 GitHub-first mode:** On launch, the app checks the online `channels.json` before showing any cached/bundled channels. A previous GitHub copy or bundled 513-entry JSON is shown only after online loading fails. See [GITHUB_PRIMARY_SOURCE_BN.md](GITHUB_PRIMARY_SOURCE_BN.md).
+
 ## GitHub Live Channel Sync (primary source)
 
 **Primary online source:**
 `https://raw.githubusercontent.com/faria2177/live-tv-channels/refs/heads/main/channels.json`
 
 - At EVERY app start, this URL is selected as the main source, including for users who previously imported local/M3U playlists.
-- A previously validated, saved GitHub JSON is shown immediately while the fresh version downloads. The supplied 513-channel `assets/channels.json` is an **offline-only last resort**, not the authoritative list.
+- The app fetches the live GitHub JSON **before displaying channel data**. A previously validated saved GitHub JSON is shown only if the online fetch fails; the supplied 513-channel `assets/channels.json` is the final offline fallback, never the authoritative list.
 - While the app remains open, it checks GitHub every **2 minutes**; returning from the background also triggers a check (minimum 30s between checks). A manual Refresh control is available. This is **polling, not instant push**; GitHub/CDN caching or device connectivity can delay changes.
 - Conditional HTTP (`ETag` / `If-None-Match`) and `Cache-Control: no-cache` minimize unnecessary downloads when supported by GitHub.
 - If a channel keeps the same EPG ID or (group, name, duplicate position), a changed stream URL is treated as **the same channel**; if currently playing, the old player is disposed and the new URL is started. Favorites and last-channel selection use stable channel IDs rather than URL.
@@ -35,7 +37,7 @@ Android TV / Google TV-এর জন্য **remote-first IPTV Live TV app**, wr
 - Default **GitHub JSON channel source** (from the user), auto-downloaded on first launch and refreshed on later launches:
   `https://raw.githubusercontent.com/faria2177/live-tv-channels/refs/heads/main/channels.json`
 - JSON / M3U import from URL, Android file picker (where provided), or pasted text
-- Bundled **513-entry `README.json` snapshot** as first-install/offline *list* fallback; the app refreshes online and caches the latest successful catalog
+- Bundled **513-entry `README.json` snapshot** as offline-only *list* fallback after a failed GitHub fetch; successful GitHub data replaces it
 - Manual refresh and explicit restore of the bundled snapshot from Manage channels
 - Favorite/unfavorite, favorites-only guide, last channel on relaunch
 - Stream loading/error and retry UI
@@ -87,13 +89,13 @@ APK path: `build/app/outputs/flutter-apk/app-release.apk`.
 
 ## Load TV channels
 
-1. Start app; it **immediately shows the user-supplied 513-channel `README.json` snapshot** if no saved list exists, while automatically attempting the GitHub `channels.json` URL in the background. You do not need to paste the URL.
+1. Start app; it fetches the GitHub `channels.json` URL as the **primary source** and shows its live channel count. Only when GitHub cannot be reached or the JSON is invalid will the app display a saved GitHub catalog or the bundled 513-channel offline snapshot. You do not need to paste the URL.
 2. Press **OK** to open the guide and change channels with the remote. The built-in guide has a **Refresh online channels** action for manually checking updates.
 3. To add another source, open **Manage JSON / M3U channels**, paste your URL or import a file. You can return to the default GitHub source using **Use supplied GitHub channels.json** or load the bundled file using **Use bundled README.json channels (513)**.
 
 ### Notes on your supplied GitHub catalog
 
-The JSON URL is configured in `PlaylistRepository.defaultChannelsUrl`. Your uploaded `README.json` is embedded unchanged as `assets/channels.json` and is parsed on the first launch or when chosen manually. Future GitHub updates replace it at runtime when the online fetch succeeds. Both routes use the real `name`, `logo`, `group`, `url` fields. The uploaded data contains **513 entries with 513 distinct URL strings** (492 distinct case-insensitive channel names), including **21 HTTP** and **492 HTTPS** URLs. **50 URLs have `e=` expiry timestamps in July 2026**, before the current date (October 21, 2026); provider authorization may reject them. `epg_id` is blank in all entries. Playback of any channel remains unverified; no client can regenerate a provider's private token or bypass DRM. See `CHANGES_README_JSON.md`.
+The JSON URL is configured in `PlaylistRepository.defaultChannelsUrl`. Your uploaded `README.json` is embedded unchanged as `assets/channels.json` and is parsed only when the GitHub request fails, or when the user explicitly chooses it. Future GitHub updates replace it at runtime when the online fetch succeeds. Both routes use the real `name`, `logo`, `group`, `url` fields. The uploaded data contains **513 entries with 513 distinct URL strings** (492 distinct case-insensitive channel names), including **21 HTTP** and **492 HTTPS** URLs. **50 URLs have `e=` expiry timestamps in July 2026**, before the current date (October 21, 2026); provider authorization may reject them. `epg_id` is blank in all entries. Playback of any channel remains unverified; no client can regenerate a provider's private token or bypass DRM. See `CHANGES_README_JSON.md`.
 
 #### Other ways to load sources
 1. Paste your IPTV provider's **JSON/M3U URL** and select **Load from URL**, or load a local file / paste the entire catalog.
@@ -110,7 +112,7 @@ https://your-authorized-server.example/live/news.m3u8
 https://your-authorized-server.example/live/sports.m3u8
 ```
 
-Replace example domains with **streams you have permission to watch**. JSON/M3U lists are cached locally for next launch. URL playlists are refreshed on each launch, and retain the last usable cache if fetching fails.
+Replace example domains with **streams you have permission to watch**. JSON/M3U lists may be cached locally. On every app launch, the primary GitHub source takes precedence and is requested first. The last verified GitHub catalog remains available as offline fallback.
 
 ### Supported / not yet supported
 
