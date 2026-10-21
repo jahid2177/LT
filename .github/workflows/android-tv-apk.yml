@@ -42,6 +42,9 @@ jobs:
           python3 tools/check_shared_preferences_runtime.py
           flutter pub deps --style=compact | grep shared_preferences_android
 
+      - name: Check independent native Crash Finder setup
+        run: python3 tools/check_crash_finder.py
+
       - name: Dart static analysis
         run: flutter analyze --no-fatal-infos
 
