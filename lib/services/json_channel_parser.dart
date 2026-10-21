@@ -184,6 +184,12 @@ class JsonChannelParser {
         value.startsWith('data:')) {
       return null;
     }
+    // The bundled JSON also has `source: /home/runner/work/...` metadata.
+    // Such local provenance paths are NEVER stream URLs, even with baseUri.
+    if (value.startsWith('/home/runner/') ||
+        value.startsWith('/mnt/') || value.startsWith('file:')) {
+      return null;
+    }
     final parsed = Uri.tryParse(value);
     if (parsed == null) {
       return null;
@@ -195,6 +201,8 @@ class JsonChannelParser {
         resolved.host.isEmpty) {
       return null;
     }
-    return resolved.toString();
+    // Keep absolute stream URLs byte-for-byte as published. HLS signed
+    // query parameters must not be accidentally rewritten by URI formatting.
+    return parsed.hasScheme ? value : resolved.toString();
   }
 }

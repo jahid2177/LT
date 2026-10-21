@@ -1,6 +1,6 @@
-// Deterministic channel-guide focus traversal for hardware Android TV D-pads.
-// Kept independent of Widgets so its transitions are easy to unit test.
-enum GuideSection { channels, toolbar }
+// Deterministic TV D-pad traversal. Search is an independently selectable row
+// between the toolbar and channel results. OK on Search opens the TV keyboard.
+enum GuideSection { channels, search, toolbar }
 enum GuideDirection { up, down, left, right }
 
 class GuideSelection {
@@ -29,39 +29,36 @@ GuideSelection moveGuideSelection({
       ? selection.channelIndex.clamp(0, channelCount - 1).toInt()
       : 0;
 
-  if (selection.section == GuideSection.toolbar || channelCount == 0) {
-    switch (direction) {
-      case GuideDirection.left:
-        return GuideSelection(section: GuideSection.toolbar,
-            actionIndex: (action - 1).clamp(0, actionCount - 1).toInt(), channelIndex: channel);
-      case GuideDirection.right:
-        return GuideSelection(section: GuideSection.toolbar,
-            actionIndex: (action + 1).clamp(0, actionCount - 1).toInt(), channelIndex: channel);
-      case GuideDirection.down:
-        return GuideSelection(
-            section: channelCount > 0 ? GuideSection.channels : GuideSection.toolbar,
-            actionIndex: action, channelIndex: channel);
-      case GuideDirection.up:
-        return GuideSelection(section: GuideSection.toolbar,
-            actionIndex: action, channelIndex: channel);
-    }
-  }
-  switch (direction) {
-    case GuideDirection.up:
-      if (channel == 0) {
-        return GuideSelection(section: GuideSection.toolbar,
-            actionIndex: action, channelIndex: channel);
-      }
-      return GuideSelection(section: GuideSection.channels,
-          actionIndex: action, channelIndex: channel - 1);
-    case GuideDirection.down:
-      return GuideSelection(section: GuideSection.channels,
-          actionIndex: action, channelIndex: (channel + 1).clamp(0, channelCount - 1).toInt());
-    case GuideDirection.right:
-      return GuideSelection(section: GuideSection.toolbar,
-          actionIndex: action, channelIndex: channel);
-    case GuideDirection.left:
-      return GuideSelection(section: GuideSection.channels,
-          actionIndex: action, channelIndex: channel, closeGuide: true);
-  }
+  GuideSelection next(GuideSection section, {int? actionIndex,
+      int? channelIndex, bool closeGuide = false}) => GuideSelection(
+    section: section,
+    actionIndex: actionIndex ?? action,
+    channelIndex: channelIndex ?? channel,
+    closeGuide: closeGuide,
+  );
+
+  return switch ((selection.section, direction)) {
+    (GuideSection.toolbar, GuideDirection.left) => next(GuideSection.toolbar,
+        actionIndex: (action - 1).clamp(0, actionCount - 1).toInt()),
+    (GuideSection.toolbar, GuideDirection.right) => next(GuideSection.toolbar,
+        actionIndex: (action + 1).clamp(0, actionCount - 1).toInt()),
+    (GuideSection.toolbar, GuideDirection.down) => next(GuideSection.search),
+    (GuideSection.toolbar, GuideDirection.up) => next(GuideSection.toolbar),
+    (GuideSection.search, GuideDirection.up) ||
+    (GuideSection.search, GuideDirection.left) ||
+    (GuideSection.search, GuideDirection.right) => next(GuideSection.toolbar),
+    (GuideSection.search, GuideDirection.down) => next(channelCount > 0
+        ? GuideSection.channels : GuideSection.search),
+    (GuideSection.channels, GuideDirection.up) => next(
+        channel == 0 || channelCount == 0
+            ? GuideSection.search : GuideSection.channels,
+        channelIndex: channel > 0 ? channel - 1 : 0),
+    (GuideSection.channels, GuideDirection.down) => next(
+        channelCount > 0 ? GuideSection.channels : GuideSection.search,
+        channelIndex: channelCount > 0
+            ? (channel + 1).clamp(0, channelCount - 1).toInt() : 0),
+    (GuideSection.channels, GuideDirection.right) => next(GuideSection.toolbar),
+    (GuideSection.channels, GuideDirection.left) => next(GuideSection.channels,
+        closeGuide: true),
+  };
 }

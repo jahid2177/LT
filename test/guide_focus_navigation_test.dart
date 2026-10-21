@@ -17,63 +17,65 @@ void main() {
         channelCount: channelCount,
       );
 
-  test('up at first channel enters the top actions', () {
-    final state = move(firstChannel, GuideDirection.up);
-    expect(state.section, GuideSection.toolbar);
-    expect(state.actionIndex, 0);
-    expect(state.closeGuide, false);
+  test('up at first channel focuses search, then toolbar', () {
+    final search = move(firstChannel, GuideDirection.up);
+    expect(search.section, GuideSection.search);
+    final toolbar = move(search, GuideDirection.up);
+    expect(toolbar.section, GuideSection.toolbar);
+    expect(toolbar.actionIndex, 0);
   });
 
-  test('up from other channel moves highlight without switching region', () {
+  test('up from other channel moves highlight', () {
     const from = GuideSelection(
-      section: GuideSection.channels, actionIndex: 0, channelIndex: 5);
+        section: GuideSection.channels, actionIndex: 0, channelIndex: 5);
     final state = move(from, GuideDirection.up);
     expect(state.section, GuideSection.channels);
     expect(state.channelIndex, 4);
   });
 
-  test('right from channel list enters actions directly', () {
-    final state = move(firstChannel, GuideDirection.right);
-    expect(state.section, GuideSection.toolbar);
+  test('right from channel list enters top actions directly', () {
+    expect(move(firstChannel, GuideDirection.right).section,
+        GuideSection.toolbar);
   });
 
-  test('remote right can reach refresh, debug, settings and close', () {
-    var state = move(firstChannel, GuideDirection.up);
+  test('left and right reach refresh, debug, settings and close', () {
+    var state = move(move(firstChannel, GuideDirection.up), GuideDirection.up);
     for (var i = 1; i < 5; i++) {
       state = move(state, GuideDirection.right);
       expect(state.actionIndex, i);
       expect(state.section, GuideSection.toolbar);
     }
-    // Repeated right stops at the last button.
     expect(move(state, GuideDirection.right).actionIndex, 4);
-    // LEFT returns to Settings, Debug and Refresh.
     expect(move(state, GuideDirection.left).actionIndex, 3);
   });
 
-  test('down returns from actions to channel list', () {
-    final toolbar = move(firstChannel, GuideDirection.up);
-    final state = move(toolbar, GuideDirection.down);
-    expect(state.section, GuideSection.channels);
-    expect(state.channelIndex, 0);
+  test('down moves from toolbar to search then channel results', () {
+    final toolbar = move(move(firstChannel, GuideDirection.up), GuideDirection.up);
+    final search = move(toolbar, GuideDirection.down);
+    expect(search.section, GuideSection.search);
+    final channel = move(search, GuideDirection.down);
+    expect(channel.section, GuideSection.channels);
+    expect(channel.channelIndex, 0);
   });
 
-  test('empty favorites remains on actions, so Show All is reachable', () {
-    final state = move(firstChannel, GuideDirection.up, channelCount: 0);
-    expect(state.section, GuideSection.toolbar);
-    expect(move(state, GuideDirection.down, channelCount: 0).section,
+  test('no search results keeps keyboard search row reachable', () {
+    final search = move(firstChannel, GuideDirection.up, channelCount: 0);
+    expect(search.section, GuideSection.search);
+    expect(move(search, GuideDirection.down, channelCount: 0).section,
+        GuideSection.search);
+    expect(move(search, GuideDirection.up, channelCount: 0).section,
         GuideSection.toolbar);
   });
 
   test('left from channel list closes drawer, not from toolbar', () {
     expect(move(firstChannel, GuideDirection.left).closeGuide, isTrue);
-    final toolbar = move(firstChannel, GuideDirection.up);
+    final toolbar = move(move(firstChannel, GuideDirection.up), GuideDirection.up);
     expect(move(toolbar, GuideDirection.left).closeGuide, isFalse);
   });
 
   test('down at last channel does not wrap to first', () {
     const last = GuideSelection(
         section: GuideSection.channels, actionIndex: 2, channelIndex: 512);
-    final state = move(last, GuideDirection.down);
-    expect(state.channelIndex, 512);
+    expect(move(last, GuideDirection.down).channelIndex, 512);
   });
 }

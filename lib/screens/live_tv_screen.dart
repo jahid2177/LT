@@ -11,6 +11,7 @@ import '../services/playlist_repository.dart';
 import '../services/crash_reporter.dart';
 import '../services/guide_focus_navigation.dart';
 import '../services/screen_awake_policy.dart';
+import '../services/channel_search.dart';
 import 'playlist_dialog.dart';
 
 class LiveTvScreen extends StatefulWidget {
@@ -52,6 +53,10 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
   final _repository = PlaylistRepository();
   final _focus = FocusNode(debugLabel: 'TV remote input');
   final _listScroll = ScrollController();
+  final _searchController = TextEditingController();
+  final _searchFocus = FocusNode(debugLabel: 'Channel search TV keyboard');
+  String _searchQuery = '';
+
   GuideSection _guideSection = GuideSection.channels;
   int _toolbarIndex = 0;
   static const _guideActionCount = 5;
@@ -91,10 +96,16 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
   Timer? _infoTimer;
   Timer? _numberTimer;
 
-  List<int> get _visibleIndices => <int>[
-        for (var i = 0; i < _channels.length; i++)
-          if (!_favoritesOnly || _favorites.contains(stableChannelKey(_channels, i))) i,
-      ];
+  List<int> get _visibleIndices => searchChannelIndices(
+        _channels,
+        query: _searchQuery,
+        allowedIndices: _favoritesOnly
+            ? <int>{
+                for (var i = 0; i < _channels.length; i++)
+                  if (_favorites.contains(stableChannelKey(_channels, i))) i,
+              }
+            : null,
+      );
 
   TvChannel? get _currentChannel =>
       _currentIndex >= 0 && _currentIndex < _channels.length
@@ -363,11 +374,16 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
         selection.channels.indexWhere((e) => e.url == oldHighlightUrl);
     final matchedKey = matchingIndex >= 0
         ? stableChannelKey(selection.channels, matchingIndex) : null;
-    final newVisible = <int>[
-      for (var i = 0; i < selection.channels.length; i++)
-        if (!_favoritesOnly ||
-            _favorites.contains(stableChannelKey(selection.channels, i))) i,
-    ];
+    final newVisible = searchChannelIndices(
+      selection.channels,
+      query: _searchQuery,
+      allowedIndices: _favoritesOnly
+          ? <int>{
+              for (var i = 0; i < selection.channels.length; i++)
+                if (_favorites.contains(stableChannelKey(selection.channels, i))) i,
+            }
+          : null,
+    );
     final nextHighlight = newVisible.indexOf(migratedHighlight);
 
     setState(() {
@@ -391,7 +407,7 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
           _highlightIndex = 0;
         }
         if (_drawerVisible && newVisible.isEmpty) {
-          _guideSection = GuideSection.toolbar;
+          _guideSection = GuideSection.search;
         }
       } else {
         _favoritesOnly = false;
@@ -596,7 +612,7 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
     final visible = _visibleIndices;
     setState(() {
       _drawerVisible = true;
-      _guideSection = visible.isEmpty ? GuideSection.toolbar : GuideSection.channels;
+      _guideSection = visible.isEmpty ? GuideSection.search : GuideSection.channels;
       _toolbarIndex = 0;
       _highlightIndex = visible.indexOf(_currentIndex);
       if (_highlightIndex < 0) _highlightIndex = 0;
@@ -633,12 +649,41 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
       _highlightIndex = 0;
     });
     if (_visibleIndices.isEmpty) {
-      _guideSection = GuideSection.toolbar;
+      setState(() => _guideSection = GuideSection.search);
     }
     _ensureHighlightedVisible();
   }
 
+  void _updateSearch(String query) {
+    setState(() {
+      _searchQuery = query;
+      _highlightIndex = 0;
+    });
+    _ensureHighlightedVisible();
+  }
+
+  void _clearSearch() {
+    _searchController.clear();
+    _updateSearch('');
+  }
+
+  void _startSearchEditing() {
+    setState(() => _guideSection = GuideSection.search);
+    _searchFocus.requestFocus();
+  }
+
+  void _finishSearchEditing() {
+    _searchFocus.unfocus();
+    if (!mounted) return;
+    setState(() => _guideSection = GuideSection.search);
+    _focus.requestFocus();
+  }
+
   void _onBack() {
+    if (_searchFocus.hasFocus) {
+      _finishSearchEditing();
+      return;
+    }
     if (_drawerVisible) {
       setState(() => _drawerVisible = false);
     } else if (_infoVisible) {
@@ -712,9 +757,13 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
       _activateToolbarAction(_toolbarIndex);
       return;
     }
+    if (_guideSection == GuideSection.search) {
+      _startSearchEditing();
+      return;
+    }
     final visible = _visibleIndices;
     if (visible.isEmpty) {
-      setState(() => _guideSection = GuideSection.toolbar);
+      setState(() => _guideSection = GuideSection.search);
       return;
     }
     _tune(visible[_highlightIndex.clamp(0, visible.length - 1).toInt()]);
@@ -743,6 +792,23 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
   KeyEventResult _handleKey(FocusNode node, KeyEvent event) {
     if (_dialogOpen || event is! KeyDownEvent) return KeyEventResult.ignored;
     final key = event.logicalKey;
+    // While the TV IME is active the TextField must receive typing, arrows,
+    // deletion and OK. Otherwise the global remote handler would switch TV
+    // channels or interpret search digits as channel-number shortcuts.
+    if (_searchFocus.hasFocus) {
+      if (key == LogicalKeyboardKey.escape ||
+          key == LogicalKeyboardKey.goBack) {
+        _finishSearchEditing();
+        return KeyEventResult.handled;
+      }
+      return KeyEventResult.ignored;
+    }
+    if (_drawerVisible && _guideSection == GuideSection.search &&
+        (key == LogicalKeyboardKey.delete ||
+         key == LogicalKeyboardKey.backspace)) {
+      _clearSearch();
+      return KeyEventResult.handled;
+    }
     if (key == LogicalKeyboardKey.arrowUp) {
       _onDirectional(-1);
     } else if (key == LogicalKeyboardKey.arrowDown) {
@@ -791,6 +857,8 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
     _queuePlayerCleanup();
     _focus.dispose();
     _listScroll.dispose();
+    _searchController.dispose();
+    _searchFocus.dispose();
     super.dispose();
   }
 
@@ -1189,12 +1257,63 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
             ]),
           ),
           Padding(
+            padding: const EdgeInsets.fromLTRB(15, 2, 15, 10),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 120),
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              decoration: BoxDecoration(
+                color: _guideSection == GuideSection.search
+                    ? const Color(0xFF263A6B) : const Color(0xFF1C263B),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: _guideSection == GuideSection.search
+                      ? const Color(0xFFFFFFFF) : const Color(0xFF46526B),
+                  width: _guideSection == GuideSection.search ? 2 : 1,
+                ),
+              ),
+              child: Row(children: <Widget>[
+                const Icon(Icons.search, color: Color(0xFFC9D8FA)),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: TextField(
+                    key: const Key('guide_search_field'),
+                    controller: _searchController,
+                    focusNode: _searchFocus,
+                    onTap: () => setState(() => _guideSection = GuideSection.search),
+                    onChanged: _updateSearch,
+                    onSubmitted: (_) => _finishSearchEditing(),
+                    textInputAction: TextInputAction.search,
+                    textCapitalization: TextCapitalization.none,
+                    style: const TextStyle(color: Colors.white, fontSize: 16),
+                    decoration: const InputDecoration(
+                      hintText: 'Search channels or categories (OK)',
+                      hintStyle: TextStyle(color: Color(0xFFA8B9D7), fontSize: 14),
+                      border: InputBorder.none,
+                      isDense: true,
+                    ),
+                  ),
+                ),
+                if (_searchQuery.isNotEmpty)
+                  ExcludeFocus(
+                    child: IconButton(
+                      key: const Key('guide_clear_search'),
+                      tooltip: 'Clear search',
+                      onPressed: _clearSearch,
+                      icon: const Icon(Icons.close, size: 20),
+                    ),
+                  ),
+              ]),
+            ),
+          ),
+          Padding(
             padding: const EdgeInsets.fromLTRB(18, 0, 18, 12),
             child: Align(
               alignment: Alignment.centerLeft,
               child: Text(
                 _sourceError != null ? 'Offline / GitHub unavailable • saved list shown'
                   : _refreshing ? 'Checking GitHub for channel updates…'
+                  : _searchQuery.trim().isNotEmpty
+                    ? '${indices.length} results for “${_searchQuery.trim()}”'
                   : _favoritesOnly ? '${indices.length} favorites'
                   : _playlistUrl == PlaylistRepository.defaultChannelsUrl
                     ? '${indices.length} channels • ${_onlineConfirmed ? 'GitHub synced' : 'saved copy • syncing'} • auto-refresh 2 min'
@@ -1206,9 +1325,14 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
           const Divider(height: 1),
           Expanded(
             child: indices.isEmpty
-                ? const Center(child: Text(
-                    'No favorites yet. Use ← → at the top to select Show All.',
-                    textAlign: TextAlign.center))
+                ? Center(child: Padding(
+                    padding: const EdgeInsets.all(15),
+                    child: Text(
+                      _searchQuery.trim().isNotEmpty
+                          ? 'No channels match your search. Select Search and clear the text.'
+                          : 'No favorites yet. Use the star icon at the top to show all.',
+                      textAlign: TextAlign.center),
+                  ))
                 : ListView.builder(
                     controller: _listScroll,
                     itemCount: indices.length,
@@ -1284,7 +1408,7 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
           const Divider(height: 1),
           const Padding(
             padding: EdgeInsets.all(12),
-            child: Text('↑ from first channel → toolbar • ← → choose icon • OK select • BACK close',
+            child: Text('↑ channels → Search → toolbar • OK search/choose • ← → icons • BACK close',
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 12, color: Color(0xFF97A9C8))),
           ),

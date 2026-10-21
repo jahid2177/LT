@@ -201,3 +201,14 @@ white/blue border. Mobile touch input remains enabled.
 The GitHub JSON source, two-minute automatic refresh, offline cache and 513
 bundled channels are unchanged. Run the GitHub Actions Flutter tests and APK
 build to validate on an actual Android TV device.
+
+
+## v1.1.7 — Search Bar + bundled JSON checks
+
+The TV Channel Guide has a Search Bar between the action toolbar and channel list.
+Use D-pad Up from the first channel, press OK to open the Android TV keyboard,
+then search by channel name, group or channel number.
+
+Bundled channel tests now read via Flutter `rootBundle` rather than assuming a
+filesystem working directory. GitHub Actions validates all 513 bundled entries
+before `flutter test -r expanded`. See `SEARCH_AND_BUNDLED_TEST_FIX_BN.md`.

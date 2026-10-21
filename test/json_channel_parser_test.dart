@@ -70,6 +70,17 @@ void main() {
         throwsFormatException);
   });
 
+  test('runner provenance is not a media stream even with an online baseUri', () {
+    const source = '''[
+      {"name":"News","url":"https://tv.example/news.m3u8?token=abc123",
+       "source":"/home/runner/work/project/source.m3u"}
+    ]''';
+    final channels = parser.parse(source,
+        baseUri: Uri.parse('https://raw.githubusercontent.com/example/channels.json'));
+    expect(channels, hasLength(1));
+    expect(channels.single.url, 'https://tv.example/news.m3u8?token=abc123');
+  });
+
   test('repository auto-detects JSON and M3U', () {
     final repository = PlaylistRepository();
     final jsonChannels = repository.parse('''
