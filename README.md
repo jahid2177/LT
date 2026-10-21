@@ -65,7 +65,7 @@ Android TV / Google TV-এর জন্য **remote-first IPTV Live TV app**, wr
 1. Create a **new empty GitHub repository** (e.g. `Live-TV-Remote`).
 2. **Extract the ZIP**, then upload the **contents** (including `.github/` and `android/`) to the root of the GitHub repository. Do not upload only the ZIP if you want Actions to build it.
 3. Open **Actions → Android TV APK → Run workflow**; alternatively push to `main`.
-4. After a successful run, download **Live-TV-Remote-AndroidTV-arm64** under **Artifacts**. Inside is `app-release.apk`.
+4. After a successful run, download **Live-TV-Remote-AndroidTV-ARM32-ARM64-Universal** under **Artifacts**. Inside is `app-release.apk`.
 5. Copy APK to TV (USB/ADB) and sideload. Allow installing from the relevant source if prompted.
 
 This GitHub-ready repository stores the custom Android TV source and configuration, while letting Flutter generate missing standard platform boilerplate (including the Gradle wrapper JAR) on first build. It avoids bundling SDK-generated binary files in this ZIP.
@@ -77,7 +77,7 @@ flutter create --platforms=android --project-name=live_tv_remote --org=com.examp
 flutter pub get
 flutter analyze
 flutter test
-flutter build apk --release --target-platform android-arm64
+flutter build apk --release --target-platform android-arm,android-arm64
 ```
 
 APK path: `build/app/outputs/flutter-apk/app-release.apk`.
@@ -180,17 +180,18 @@ No blanket `-ignorewarnings` or R8 disablement is used. The 513-channel JSON sna
 
 Android release startup bug in `shared_preferences_android` 2.5.0 fixed by pinning **2.4.28** and adding targeted Kotlin R8 keep rules. CI checks the resolved version to prevent regression. See [`FIX_ANDROID_TV_SHARED_PREFS_BN.md`](FIX_ANDROID_TV_SHARED_PREFS_BN.md) for Bengali testing instructions. GitHub `channels.json` stays the primary, auto-refreshed source.
 
-## Android TV Crash Finder (v1.1.3)
+## Android TV 32-bit Crash Diagnostics (v1.1.4)
 
 If the TV closes the application immediately even though the same APK works on
-an Android phone, start the **Live TV Crash Finder** launcher icon after the
-crash. This is a completely native Activity and does not load the Flutter
-engine, plugins, or video decoder. It keeps on-device logs for uncaught
+an Android phone, open **Live TV Remote**, choose **START LIVE TV**, then,
+if it crashes, reopen **Live TV Remote** and choose **OPEN CRASH FINDER**.
+The start screen and Crash Finder are native and do not load Flutter, plugins,
+or any video decoder. It keeps on-device logs for uncaught
 Java/Kotlin exceptions, Flutter errors, native startup steps, and (on Android
 11+) Android process-exit reasons. Use **Save TXT** or **Share** to collect the
 report. For a native signal crash, the full stack may still require ADB logcat.
 
-Instructions in Bengali: [`CRASH_FINDER_TV_BN.md`](CRASH_FINDER_TV_BN.md).
+Haier Android 11 / 32-bit specific instructions: [`TV_ARM32_CRASH_TEST_BN.md`](TV_ARM32_CRASH_TEST_BN.md).
 
 No crash reports are automatically sent to a server. The primary JSON catalog
 remains the GitHub URL and the existing two-minute refresh remains enabled.

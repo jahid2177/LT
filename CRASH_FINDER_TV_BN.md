@@ -1,4 +1,4 @@
-# Live TV Remote — Android TV Crash Finder (v1.1.3)
+# Live TV Remote — Android TV Crash Finder (v1.1.4)
 
 ## কেন এই সংস্করণ
 
@@ -15,7 +15,7 @@ Android মোবাইলে চললেও Android TV-তে অ্যাপ 
 
 রিপোর্ট মূল অ্যাপের local storage-এ থাকে। Debug APK-এর package আলাদা (`com.example.live_tv_remote.diagnostic`), তাই সেটির Crash Finder release অ্যাপের রিপোর্ট দেখতে পাবে না। **Release APK-এর Crash Finder** ব্যবহার করবেন।
 
-## দ্বিতীয় আইকন না দেখালে ADB দিয়ে Crash Finder খুলুন
+## ADB দিয়ে Crash Finder সরাসরি খুলুন
 
 TV-তে Developer Options এবং ADB debugging চালু করে PC-এর সঙ্গে সংযুক্ত করুন:
 
@@ -58,7 +58,7 @@ adb logcat -d -v threadtime > live_tv_crash_logcat.txt
 চ্যানেলের **মূল সোর্স**:
 `https://raw.githubusercontent.com/faria2177/live-tv-channels/refs/heads/main/channels.json`
 
-অ্যাপ চালুতে, অ্যাপে ফিরে এলে এবং সচল অবস্থায় প্রায় প্রতি ২ মিনিটে sync চেক। সর্বশেষ সফল তালিকার cache/৫১৩টি bundled fallback, রিমোট CH+/CH-, D-pad, OK, Volume এবং Favorites আগের মতো আছে।
+Live TV শুরু হলে, অ্যাপে ফিরে এলে এবং সচল অবস্থায় প্রায় প্রতি ২ মিনিটে sync চেক। সর্বশেষ সফল তালিকার cache/৫১৩টি bundled fallback, রিমোট CH+/CH-, D-pad, OK, Volume এবং Favorites আগের মতো আছে।
 
 ## যাচাইয়ের অবস্থা
 

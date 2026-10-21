@@ -4,10 +4,10 @@
 
 GitHub Actions > Android TV APK > Run workflow চালিয়ে দুটি Artifact পাবেন:
 
-- `Live-TV-Remote-AndroidTV-arm64` — স্বাভাবিক Release APK
-- `Live-TV-Remote-AndroidTV-Diagnostic-debug` — সমস্যা পরীক্ষার Debug APK (পৃথক অ্যাপ হিসেবে ইনস্টল হবে)।
+- `Live-TV-Remote-AndroidTV-ARM32-ARM64-Universal` — স্বাভাবিক Release APK
+- `Live-TV-Remote-AndroidTV-ARM32-Diagnostic-debug` — সমস্যা পরীক্ষার Debug APK (পৃথক অ্যাপ হিসেবে ইনস্টল হবে)।
 
-Release খোলামাত্র ক্র্যাশ করলে Debug APK চালিয়ে দেখুন। দুটিই ক্র্যাশ করলে TV-এর crash log দরকার।
+TV-এর Native start screen থেকে START LIVE TV চাপুন; বন্ধ হলে OPEN CRASH FINDER চাপুন। Release খোলামাত্র ক্র্যাশ করলে Debug APK চালিয়ে দেখুন। দুটিই ক্র্যাশ করলে TV-এর crash log দরকার।
 
 Windows PC-তে ADB কানেক্ট করে PowerShell-এ নিচের কমান্ড দিন:
 

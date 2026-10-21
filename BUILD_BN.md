@@ -10,7 +10,7 @@
 2. GitHub-এ নতুন খালি Repository খুলুন।
 3. Extract করা `live_tv_remote` ফোল্ডারের **ভেতরের সব ফাইল** (লুকানো `.github` ফোল্ডারসহ) Repository-তে আপলোড করুন।
 4. GitHub → **Actions** → **Android TV APK** → **Run workflow** চাপুন।
-5. Build সফল হলে Run-এর **Artifacts** থেকে `Live-TV-Remote-AndroidTV-arm64` ডাউনলোড করুন।
+5. Build সফল হলে Run-এর **Artifacts** থেকে `Live-TV-Remote-AndroidTV-ARM32-ARM64-Universal` ডাউনলোড করুন।
 6. Artifact ZIP-এর ভিতরে `app-release.apk` পাবেন। TV-তে Install করুন।
 
 প্রথম Build-এ Flutter/Gradle dependencies ডাউনলোড হওয়ায় বেশি সময় লাগতে পারে। এটি Play Store signing নয়; sideload testing APK।
@@ -93,3 +93,7 @@ GitHub run `logs_107174983477.zip` এ ১১টি unit test পাস কর�
 - অ্যাপের চ্যানেল তালিকা ও প্লেয়ার অপরিবর্তিত।
 
 সংশোধিত ফাইল GitHub-এ আপলোড করে **Actions → Android TV APK → Run workflow** চালান। এটি এখনো এখানে APK build করে পরীক্ষা করা হয়নি। বিস্তারিত `BUILD_FIX_R8_2026-10-21.md`।
+
+## Haier Android TV (32-bit ARM): নতুন diagnostic build v1.1.4
+
+Release APK-তে `armeabi-v7a` ও `arm64-v8a` উভয় সমর্থন আছে। TV-তে অ্যাপ খুলে Native start screen থেকে **START LIVE TV** চাপুন। বন্ধ হয়ে গেলে আবার একই অ্যাপ খুলে **OPEN CRASH FINDER → REFRESH → SAVE TXT** করুন। নির্দেশনা: `TV_ARM32_CRASH_TEST_BN.md`।

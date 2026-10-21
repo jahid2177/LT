@@ -60,6 +60,10 @@ class CrashFinderActivity : Activity() {
                 setOnClickListener { operation() }
             }, LinearLayout.LayoutParams(0, dp(54), 1f))
         }
+        addAction("Try Live TV") {
+            CrashLogStore.append(this, "CRASH_FINDER_START_TV_PRESSED")
+            startActivity(Intent(this, MainActivity::class.java))
+        }
         addAction("Refresh") { refresh() }
         addAction("Save TXT") { saveReport() }
         addAction("Share") { shareReport() }
@@ -79,7 +83,7 @@ class CrashFinderActivity : Activity() {
         root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
         setContentView(root)
         refresh()
-        actions.getChildAt(0)?.requestFocus()
+        actions.getChildAt(1)?.requestFocus()
     }
 
     private fun refresh() { reportView.text = CrashLogStore.read(this) }
