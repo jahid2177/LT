@@ -48,6 +48,9 @@ jobs:
       - name: Verify Android TV Keep Screen Awake wiring
         run: python3 tools/check_screen_awake.py
 
+      - name: Verify GitHub primary channel catalog policy
+        run: python3 tools/check_github_primary_policy.py
+
       - name: Dart static analysis
         run: flutter analyze --no-fatal-infos
 
