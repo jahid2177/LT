@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -83,6 +82,27 @@ class _PlaylistDialogState extends State<PlaylistDialog> {
         );
       });
 
+  void _defaultGithub() => _submit(() async {
+        const url = PlaylistRepository.defaultChannelsUrl;
+        final text = await widget.repository.fetchPlaylist(url);
+        return PlaylistSelection(
+          text: text,
+          url: url,
+          channels: widget.repository.parse(text, baseUri: Uri.parse(url)),
+        );
+      });
+
+  void _bundledJson() => _submit(() async {
+        final text = await widget.repository.loadBundledChannels();
+        return PlaylistSelection(
+          text: text,
+          // Keep fetching the online feed next launch; use saved snapshot on
+          // startup even if the server cannot currently be reached.
+          url: PlaylistRepository.defaultChannelsUrl,
+          channels: widget.repository.parse(text),
+        );
+      });
+
   void _fromText() => _submit(() async {
         final text = _text.text;
         return PlaylistSelection(
@@ -91,23 +111,23 @@ class _PlaylistDialogState extends State<PlaylistDialog> {
         );
       });
 
+  // file_picker v13 returns PlatformFile directly; old
+  // FilePicker.platform.pickFiles/withData/FilePickerResult no longer compile.
   void _fromFile() => _submit(() async {
-        final result = await FilePicker.platform.pickFiles(
+        final file = await FilePicker.pickFile(
           type: FileType.custom,
-          allowedExtensions: <String>['m3u', 'm3u8', 'txt'],
-          withData: true,
+          allowedExtensions: <String>['m3u', 'm3u8', 'json', 'txt'],
         );
-        if (result == null || result.files.isEmpty) {
+        if (file == null) {
           throw const FormatException('File selection cancelled.');
         }
-        final file = result.files.single;
-        final bytes = file.bytes ??
-            (file.path == null ? null : await File(file.path!).readAsBytes());
-        if (bytes == null) {
-          throw const FormatException('Cannot read the selected file.');
+        final length = file.lengthSync() ?? await file.length();
+        if (length != null && length > 5 * 1024 * 1024) {
+          throw const FormatException('Channel list exceeds 5 MB.');
         }
+        final bytes = await file.readAsBytes();
         if (bytes.length > 5 * 1024 * 1024) {
-          throw const FormatException('Playlist exceeds 5 MB.');
+          throw const FormatException('Channel list exceeds 5 MB.');
         }
         final text = utf8.decode(bytes, allowMalformed: true);
         return PlaylistSelection(
@@ -152,14 +172,14 @@ class _PlaylistDialogState extends State<PlaylistDialog> {
                 style: TextStyle(color: Color(0xFFADB7CE)),
               ),
               const SizedBox(height: 22),
-              const Text('M3U playlist URL'),
+              const Text('JSON / M3U channel list URL'),
               const SizedBox(height: 8),
               TextField(
                 controller: _url,
                 enabled: !_busy,
                 keyboardType: TextInputType.url,
                 decoration: const InputDecoration(
-                  hintText: 'https://provider.example/playlist.m3u',
+                  hintText: 'https://example.com/channels.json or playlist.m3u',
                   border: OutlineInputBorder(),
                   prefixIcon: Icon(Icons.link),
                 ),
@@ -175,6 +195,18 @@ class _PlaylistDialogState extends State<PlaylistDialog> {
                 ),
               ),
               const SizedBox(height: 11),
+              OutlinedButton.icon(
+                onPressed: _busy ? null : _defaultGithub,
+                icon: const Icon(Icons.cloud_sync),
+                label: const Text('Use supplied GitHub channels.json'),
+              ),
+              const SizedBox(height: 11),
+              OutlinedButton.icon(
+                onPressed: _busy ? null : _bundledJson,
+                icon: const Icon(Icons.offline_pin),
+                label: const Text('Use bundled README.json channels (513)'),
+              ),
+              const SizedBox(height: 11),
               Row(children: <Widget>[
                 const Expanded(child: Divider()),
                 Padding(
@@ -187,10 +219,10 @@ class _PlaylistDialogState extends State<PlaylistDialog> {
               OutlinedButton.icon(
                 onPressed: _busy ? null : _fromFile,
                 icon: const Icon(Icons.folder_open),
-                label: const Text('Import .m3u file from device'),
+                label: const Text('Import .json / .m3u file from device'),
               ),
               const SizedBox(height: 16),
-              const Text('Paste M3U text (alternative for TVs without file picker)'),
+              const Text('Paste JSON or M3U text (alternative for TVs without file picker)'),
               const SizedBox(height: 8),
               TextField(
                 controller: _text,
@@ -208,7 +240,7 @@ class _PlaylistDialogState extends State<PlaylistDialog> {
                 child: OutlinedButton.icon(
                   onPressed: _busy ? null : _fromText,
                   icon: const Icon(Icons.playlist_add_check),
-                  label: const Text('Use pasted playlist'),
+                  label: const Text('Use pasted channel list'),
                 ),
               ),
               if (_error != null) ...<Widget>[

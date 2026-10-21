@@ -3,20 +3,24 @@
 Android TV / Google TV-এর জন্য **remote-first IPTV Live TV app**, written in Flutter (Dart) + a small Kotlin Android remote-key bridge.
 
 > ⚠️ **What this project is / is not**
-> This app plays **user-supplied, authorized network TV streams** from M3U playlists. It is **not** an Android hardware DVB-T/C/S tuner application and it does not read proprietary built-in TV broadcast channel lists. Hardware tuner access requires an OEM tuner/TV Input Framework integration and appropriate permissions. It contains **no copyrighted/pirated channel list**.
+> This app plays **user-supplied, authorized network TV streams** from JSON channel catalogs or M3U playlists. It is **not** an Android hardware DVB-T/C/S tuner application and it does not read proprietary built-in TV broadcast channel lists. Hardware tuner access requires an OEM tuner/TV Input Framework integration and appropriate permissions. This ZIP bundles the user-uploaded `README.json` as an offline catalog snapshot; the stream URLs are not verified and any rights to access or distribute channels remain the user's responsibility.
 
 ## Features
 
 - Android TV / Google TV leanback launcher banner + standard launcher
 - Full-screen, landscape, immersive player (video_player / Android ExoPlayer backend)
-- M3U channels using **HTTP/HTTPS HLS `.m3u8`**, DASH/MP4 when supported by the underlying player
+- JSON and M3U channels using **HTTP/HTTPS HLS `.m3u8`**, DASH/MP4 when supported by the underlying player
 - Remote hardware **CH+ / CH−** (Android key codes 166 and 167)
 - D-pad **UP/DOWN** switches channels when guide is hidden, navigates the guide when open
 - D-pad **OK/Select** opens channel guide / tunes selected channel
 - D-pad **LEFT/RIGHT**, MENU / GUIDE and BACK for navigation
 - Remote numbers **1–9, 0** for direct channel number entry
 - **VOLUME+ / VOLUME−** delegated to Android TV's normal system/media-volume control (not emulated in Flutter)
-- M3U import from URL, Android file picker (where provided), or pasted M3U text
+- Default **GitHub JSON channel source** (from the user), auto-downloaded on first launch and refreshed on later launches:
+  `https://raw.githubusercontent.com/faria2177/live-tv-channels/refs/heads/main/channels.json`
+- JSON / M3U import from URL, Android file picker (where provided), or pasted text
+- Bundled **513-entry `README.json` snapshot** as first-install/offline *list* fallback; the app refreshes online and caches the latest successful catalog
+- Manual refresh and explicit restore of the bundled snapshot from Manage channels
 - Favorite/unfavorite, favorites-only guide, last channel on relaunch
 - Stream loading/error and retry UI
 - Demo M3U with sample test videos for checking the playback pipeline (these are **not live TV channels**)
@@ -62,14 +66,22 @@ flutter build apk --release --target-platform android-arm64
 
 APK path: `build/app/outputs/flutter-apk/app-release.apk`.
 
-**Requirements:** recent Flutter stable supporting Dart 3.12+, JDK 17 and an installed Android SDK. CI sets up Flutter and Java. CI uses the default debug keystore to sign a release-mode sideload APK; use your own secure signing key for Play Store deployment.
+**Requirements:** recent Flutter stable supporting Dart 3.12+, JDK 17 and an installed Android SDK. Android minSdk 24. File picker integration uses v13 APIs. CI sets up Flutter and Java. CI uses the default debug keystore to sign a release-mode sideload APK; use your own secure signing key for Play Store deployment.
 
 ## Load TV channels
 
-1. Start app; choose **Add my M3U channels** (the demo button only plays sample videos).
-2. Paste your IPTV provider's **playlist URL** (`https://.../playlist.m3u`) and select **Load from URL**. Alternatively, load a local `.m3u` file or paste complete M3U text.
-3. Press **OK** to open the channel guide, use **D-pad UP/DOWN + OK**, or hardware **CH+ / CH−** to switch.
-4. Use the favorites button in the info overlay (or keyboard `F`) to save favorites.
+1. Start app; it **immediately shows the user-supplied 513-channel `README.json` snapshot** if no saved list exists, while automatically attempting the GitHub `channels.json` URL in the background. You do not need to paste the URL.
+2. Press **OK** to open the guide and change channels with the remote. The built-in guide has a **Refresh online channels** action for manually checking updates.
+3. To add another source, open **Manage JSON / M3U channels**, paste your URL or import a file. You can return to the default GitHub source using **Use supplied GitHub channels.json** or load the bundled file using **Use bundled README.json channels (513)**.
+
+### Notes on your supplied GitHub catalog
+
+The JSON URL is configured in `PlaylistRepository.defaultChannelsUrl`. Your uploaded `README.json` is embedded unchanged as `assets/channels.json` and is parsed on the first launch or when chosen manually. Future GitHub updates replace it at runtime when the online fetch succeeds. Both routes use the real `name`, `logo`, `group`, `url` fields. The uploaded data contains **513 entries with 513 distinct URL strings** (492 distinct case-insensitive channel names), including **21 HTTP** and **492 HTTPS** URLs. **50 URLs have `e=` expiry timestamps in July 2026**, before the current date (October 21, 2026); provider authorization may reject them. `epg_id` is blank in all entries. Playback of any channel remains unverified; no client can regenerate a provider's private token or bypass DRM. See `CHANGES_README_JSON.md`.
+
+#### Other ways to load sources
+1. Paste your IPTV provider's **JSON/M3U URL** and select **Load from URL**, or load a local file / paste the entire catalog.
+2. Press **OK** to open the channel guide, use **D-pad UP/DOWN + OK**, or hardware **CH+ / CH−** to switch.
+3. Use the favorites button in the info overlay (or keyboard `F`) to save favorites.
 
 Minimal supported M3U example:
 
@@ -81,14 +93,16 @@ https://your-authorized-server.example/live/news.m3u8
 https://your-authorized-server.example/live/sports.m3u8
 ```
 
-Replace example domains with **streams you have permission to watch**. M3U lists are cached locally for next launch; playlists fetched from URL are *not* automatically refreshed yet.
+Replace example domains with **streams you have permission to watch**. JSON/M3U lists are cached locally for next launch. URL playlists are refreshed on each launch, and retain the last usable cache if fetching fails.
 
 ### Supported / not yet supported
 
 | Feature | State |
 |---|---|
 | HLS network playback | Implemented; stream/provider-dependent |
-| URL / local M3U / pasted text | Implemented |
+| Bundled uploaded README.json (513 entries) | Integrated and parser regression test added |
+| Default GitHub JSON + auto-refresh/cache | Added; live endpoint and actual streams not verified here |
+| URL / local JSON or M3U / pasted text | Implemented |
 | DVB-T/C/S, antenna, cable physical tuner | Not implemented; requires platform/vendor integration |
 | DRM/Widevine login, Xtream APIs, proprietary encrypted channel feeds | Not implemented |
 | XMLTV EPG and catch-up TV | Not implemented |
@@ -104,12 +118,16 @@ live_tv_remote/
 │   ├── main.dart                          # MaterialApp / fullscreen setup
 │   ├── models/channel.dart                # TV channel model
 │   ├── services/m3u_parser.dart           # Pure Dart M3U parser + index wrap
+│   ├── services/json_channel_parser.dart  # JSON channel parser
 │   ├── services/playlist_repository.dart  # Persistence + HTTP M3U fetch
 │   └── screens/
 │       ├── live_tv_screen.dart            # Player + guide + remote UI
 │       └── playlist_dialog.dart           # URL/file/text playlist input
 ├── assets/demo_playlist.m3u
+├── assets/channels.json                   # Copy of uploaded README.json, 513 entries
 ├── test/widget_test.dart                  # M3U & remote channel tests
+├── test/json_channel_parser_test.dart    # JSON catalog unit tests
+├── test/bundled_channels_test.dart        # Real uploaded JSON regression tests
 ├── android/
 │   ├── app/src/main/AndroidManifest.xml   # TV launchers + permissions
 │   ├── app/src/main/kotlin/.../MainActivity.kt # CH+/- native bridge

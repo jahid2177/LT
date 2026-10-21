@@ -36,6 +36,11 @@ class _LiveTvScreenState extends State<LiveTvScreen> {
   bool _favoritesOnly = false;
   bool _dialogOpen = false;
   String _playlistUrl = '';
+  String? _preferredUrl;
+  String? _sourceError;
+  String? _cachedPlaylistText;
+  bool _refreshing = false;
+  int _selectionEpoch = 0;
   String _numberBuffer = '';
   String? _playerError;
   Timer? _infoTimer;
@@ -77,37 +82,125 @@ class _LiveTvScreenState extends State<LiveTvScreen> {
 
   Future<void> _restore() async {
     try {
-      final text = await _repository.loadText();
-      final url = await _repository.loadUrl();
+      final cached = await _repository.loadText();
+      final storedUrl = await _repository.loadUrl();
       final last = await _repository.loadLastChannelUrl();
       final favorites = await _repository.loadFavorites();
       if (!mounted) return;
-      _playlistUrl = url ?? '';
+      final hasCache = cached != null && cached.trim().isNotEmpty;
+      // Keep existing users' locally imported M3U lists intact; new installs
+      // use the supplied GitHub JSON URL as their default source.
+      final sourceUrl = storedUrl?.trim().isNotEmpty == true
+          ? storedUrl!.trim()
+          : (hasCache ? '' : PlaylistRepository.defaultChannelsUrl);
+      _playlistUrl = sourceUrl;
+      _preferredUrl = last;
       _favorites = favorites;
-      if (text != null && text.trim().isNotEmpty) {
-        final list = _repository.parse(
-          text,
-          baseUri: url == null ? null : Uri.tryParse(url),
-        );
-        setState(() {
-          _channels = list;
-          _loading = false;
-        });
-        final index = list.indexWhere((item) => item.url == last);
-        _tune(index == -1 ? 0 : index);
-      } else {
+
+      if (cached != null && cached.trim().isNotEmpty) {
+        try {
+          final channels = _repository.parse(
+            cached,
+            baseUri: sourceUrl.isEmpty ? null : Uri.tryParse(sourceUrl),
+          );
+          _cachedPlaylistText = cached;
+          setState(() {
+            _channels = channels;
+            _loading = false;
+          });
+          final index = channels.indexWhere((channel) => channel.url == last);
+          _tune(index < 0 ? 0 : index);
+        } catch (error) {
+          setState(() => _sourceError = 'Saved channel list is invalid: $error');
+        }
+      }
+      // On a first installation there is no local cache yet. Show the actual
+      // 513-entry user-supplied JSON snapshot immediately and refresh online
+      // without making the TV wait for GitHub or a network connection.
+      // This fallback also recovers an invalid/obsolete cached playlist.
+      if (_channels.isEmpty) {
+        try {
+          final bundledText = await _repository.loadBundledChannels();
+          final bundledChannels = _repository.parse(bundledText);
+          if (!mounted) return;
+          _cachedPlaylistText = bundledText;
+          setState(() {
+            _channels = bundledChannels;
+            _loading = false;
+          });
+          final index = bundledChannels.indexWhere((e) => e.url == last);
+          _tune(index < 0 ? 0 : index);
+        } catch (error) {
+          if (!mounted) return;
+          setState(() {
+            _loading = false;
+            _sourceError = 'Bundled channel list cannot be opened: $error';
+          });
+        }
+      }
+      if (sourceUrl.isNotEmpty) {
+        // Refresh from GitHub on launch, keeping the bundled/saved channels
+        // available if the network or remote JSON is temporarily unavailable.
+        unawaited(_refreshChannels(sourceUrl));
+      } else if (mounted) {
         setState(() => _loading = false);
       }
     } catch (error) {
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _playerError = 'Saved playlist could not be loaded: $error';
+        _sourceError = 'Unable to load saved channels: $error';
       });
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _focus.requestFocus();
     });
+  }
+
+  Future<void> _refreshChannels(String url) async {
+    if (_refreshing || url.isEmpty) return;
+    final epoch = _selectionEpoch;
+    setState(() {
+      _refreshing = true;
+      _sourceError = null;
+    });
+    try {
+      final text = await _repository.fetchPlaylist(url);
+      final channels = _repository.parse(text, baseUri: Uri.parse(url));
+      if (!mounted || epoch != _selectionEpoch || url != _playlistUrl) return;
+      if (_cachedPlaylistText == text && _channels.isNotEmpty) {
+        setState(() => _loading = false);
+      } else {
+        await _setPlaylist(
+          PlaylistSelection(text: text, url: url, channels: channels),
+          fromRefresh: true,
+        );
+      }
+    } catch (error) {
+      if (mounted && epoch == _selectionEpoch && url == _playlistUrl) {
+        setState(() {
+          _loading = false;
+          _sourceError = 'Unable to update channels from URL: $error';
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _refreshing = false);
+    }
+  }
+
+  Future<void> _useBundledChannels() async {
+    try {
+      final text = await _repository.loadBundledChannels();
+      final channels = _repository.parse(text);
+      if (!mounted) return;
+      await _setPlaylist(PlaylistSelection(
+        text: text,
+        url: PlaylistRepository.defaultChannelsUrl,
+        channels: channels,
+      ));
+    } catch (error) {
+      if (mounted) setState(() => _playerError = 'Bundled channels failed: $error');
+    }
   }
 
   Future<void> _useDemo() async {
@@ -120,15 +213,20 @@ class _LiveTvScreenState extends State<LiveTvScreen> {
     }
   }
 
-  Future<void> _setPlaylist(PlaylistSelection selection) async {
-    final selectedUrl = _currentChannel?.url;
+  Future<void> _setPlaylist(PlaylistSelection selection,
+      {bool fromRefresh = false}) async {
+    if (!fromRefresh) _selectionEpoch++;
+    final selectedUrl = _currentChannel?.url ?? _preferredUrl;
     final matchingIndex = selection.channels.indexWhere((e) => e.url == selectedUrl);
     setState(() {
       _channels = selection.channels;
+      _cachedPlaylistText = selection.text;
       _playlistUrl = selection.url ?? '';
       _favoritesOnly = false;
       _drawerVisible = false;
       _playerError = null;
+      _sourceError = null;
+      _loading = false;
     });
     await _repository.storePlaylist(selection.text, url: selection.url);
     if (!mounted) return;
@@ -466,7 +564,20 @@ class _LiveTvScreenState extends State<LiveTvScreen> {
                     FilledButton.icon(
                       onPressed: _openSettings,
                       icon: const Icon(Icons.playlist_add),
-                      label: const Text('Add my M3U channels'),
+                      label: const Text('Manage JSON / M3U channels'),
+                    ),
+                    if (_playlistUrl.isNotEmpty)
+                      OutlinedButton.icon(
+                        onPressed: _refreshing
+                            ? null
+                            : () => unawaited(_refreshChannels(_playlistUrl)),
+                        icon: const Icon(Icons.refresh),
+                        label: const Text('Retry online channels'),
+                      ),
+                    OutlinedButton.icon(
+                      onPressed: _useBundledChannels,
+                      icon: const Icon(Icons.offline_pin),
+                      label: const Text('Load 513 bundled channels'),
                     ),
                     OutlinedButton.icon(
                       onPressed: _useDemo,
@@ -479,6 +590,13 @@ class _LiveTvScreenState extends State<LiveTvScreen> {
                 const Text('The demo streams are sample videos, not live TV channels.',
                     textAlign: TextAlign.center,
                     style: TextStyle(color: Color(0xFF93A0B8))),
+                if (_sourceError != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 12),
+                    child: Text(_sourceError!,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(color: Color(0xFFFF9999))),
+                  ),
                 if (_playerError != null)
                   Padding(
                     padding: const EdgeInsets.only(top: 12),
@@ -645,6 +763,13 @@ class _LiveTvScreenState extends State<LiveTvScreen> {
                 icon: Icon(_favoritesOnly ? Icons.star : Icons.star_border),
               ),
               IconButton(
+                onPressed: _playlistUrl.isEmpty || _refreshing
+                    ? null
+                    : () => unawaited(_refreshChannels(_playlistUrl)),
+                tooltip: 'Refresh online channels',
+                icon: const Icon(Icons.refresh),
+              ),
+              IconButton(
                 onPressed: _openSettings,
                 tooltip: 'Manage playlist',
                 icon: const Icon(Icons.settings),
@@ -660,7 +785,9 @@ class _LiveTvScreenState extends State<LiveTvScreen> {
             child: Align(
               alignment: Alignment.centerLeft,
               child: Text(
-                _favoritesOnly ? '${indices.length} favorites' : '${indices.length} channels',
+                _sourceError != null ? 'Update failed • showing saved channels'
+                  : _refreshing ? 'Checking for online updates…'
+                  : _favoritesOnly ? '${indices.length} favorites' : '${indices.length} channels',
                 style: const TextStyle(color: Color(0xFF9DAEC9)),
               ),
             ),
@@ -698,6 +825,17 @@ class _LiveTvScreenState extends State<LiveTvScreen> {
                                   style: const TextStyle(fontSize: 16,
                                       fontWeight: FontWeight.bold)),
                             ),
+                            if (channel.logo.isNotEmpty) ...<Widget>[
+                              Image.network(
+                                channel.logo,
+                                width: 34,
+                                height: 34,
+                                fit: BoxFit.contain,
+                                errorBuilder: (_context, _error, _stackTrace) =>
+                                    const Icon(Icons.tv, size: 27),
+                              ),
+                              const SizedBox(width: 9),
+                            ],
                             Expanded(
                               child: Column(
                                 mainAxisAlignment: MainAxisAlignment.center,
