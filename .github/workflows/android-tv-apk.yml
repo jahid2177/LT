@@ -54,7 +54,7 @@ jobs:
       - name: Dart static analysis
         run: flutter analyze --no-fatal-infos
 
-      - name: Verify all 513 bundled channels before Flutter tests
+      - name: Validate bundled offline fallback JSON (variable channel count)
         run: python3 tools/check_bundled_channels.py
 
       - name: Unit tests
