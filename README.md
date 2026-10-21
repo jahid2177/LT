@@ -1,4 +1,4 @@
-> **v1.1.8 GitHub-first mode:** On launch, the app checks the online `channels.json` before showing any cached/bundled channels. A previous GitHub copy or bundled 513-entry JSON is shown only after online loading fails. See [GITHUB_PRIMARY_SOURCE_BN.md](GITHUB_PRIMARY_SOURCE_BN.md).
+> **v1.1.8 GitHub-first mode:** On launch, the app checks the online `channels.json` before showing any cached/bundled channels. A previous GitHub copy or bundled offline JSON is shown only after online loading fails. See [GITHUB_PRIMARY_SOURCE_BN.md](GITHUB_PRIMARY_SOURCE_BN.md).
 
 ## GitHub Live Channel Sync (primary source)
 
@@ -6,7 +6,7 @@
 `https://raw.githubusercontent.com/faria2177/live-tv-channels/refs/heads/main/channels.json`
 
 - At EVERY app start, this URL is selected as the main source, including for users who previously imported local/M3U playlists.
-- The app fetches the live GitHub JSON **before displaying channel data**. A previously validated saved GitHub JSON is shown only if the online fetch fails; the supplied 513-channel `assets/channels.json` is the final offline fallback, never the authoritative list.
+- The app fetches the live GitHub JSON **before displaying channel data**. A previously validated saved GitHub JSON is shown only if the online fetch fails; the bundled `assets/channels.json` is the final offline fallback, never the authoritative list.
 - While the app remains open, it checks GitHub every **2 minutes**; returning from the background also triggers a check (minimum 30s between checks). A manual Refresh control is available. This is **polling, not instant push**; GitHub/CDN caching or device connectivity can delay changes.
 - Conditional HTTP (`ETag` / `If-None-Match`) and `Cache-Control: no-cache` minimize unnecessary downloads when supported by GitHub.
 - If a channel keeps the same EPG ID or (group, name, duplicate position), a changed stream URL is treated as **the same channel**; if currently playing, the old player is disposed and the new URL is started. Favorites and last-channel selection use stable channel IDs rather than URL.
@@ -37,7 +37,7 @@ Android TV / Google TV-এর জন্য **remote-first IPTV Live TV app**, wr
 - Default **GitHub JSON channel source** (from the user), auto-downloaded on first launch and refreshed on later launches:
   `https://raw.githubusercontent.com/faria2177/live-tv-channels/refs/heads/main/channels.json`
 - JSON / M3U import from URL, Android file picker (where provided), or pasted text
-- Bundled **513-entry `README.json` snapshot** as offline-only *list* fallback after a failed GitHub fetch; successful GitHub data replaces it
+- Bundled **offline JSON snapshot** as offline-only *list* fallback after a failed GitHub fetch; successful GitHub data replaces it
 - Manual refresh and explicit restore of the bundled snapshot from Manage channels
 - Favorite/unfavorite, favorites-only guide, last channel on relaunch
 - Stream loading/error and retry UI
@@ -89,7 +89,7 @@ APK path: `build/app/outputs/flutter-apk/app-release.apk`.
 
 ## Load TV channels
 
-1. Start app; it fetches the GitHub `channels.json` URL as the **primary source** and shows its live channel count. Only when GitHub cannot be reached or the JSON is invalid will the app display a saved GitHub catalog or the bundled 513-channel offline snapshot. You do not need to paste the URL.
+1. Start app; it fetches the GitHub `channels.json` URL as the **primary source** and shows its live channel count. Only when GitHub cannot be reached or the JSON is invalid will the app display a saved GitHub catalog or the bundled offline snapshot. You do not need to paste the URL.
 2. Press **OK** to open the guide and change channels with the remote. The built-in guide has a **Refresh online channels** action for manually checking updates.
 3. To add another source, open **Manage JSON / M3U channels**, paste your URL or import a file. You can return to the default GitHub source using **Use supplied GitHub channels.json** or load the bundled file using **Use bundled README.json channels (513)**.
 
@@ -119,7 +119,7 @@ Replace example domains with **streams you have permission to watch**. JSON/M3U 
 | Feature | State |
 |---|---|
 | HLS network playback | Implemented; stream/provider-dependent |
-| Bundled uploaded README.json (513 entries) | Integrated and parser regression test added |
+| Bundled uploaded README.json (offline fallback) | Integrated and parser regression test added |
 | Default GitHub JSON + auto-refresh/cache | Added; live endpoint and actual streams not verified here |
 | URL / local JSON or M3U / pasted text | Implemented |
 | DVB-T/C/S, antenna, cable physical tuner | Not implemented; requires platform/vendor integration |
@@ -212,5 +212,17 @@ Use D-pad Up from the first channel, press OK to open the Android TV keyboard,
 then search by channel name, group or channel number.
 
 Bundled channel tests now read via Flutter `rootBundle` rather than assuming a
-filesystem working directory. GitHub Actions validates all 513 bundled entries
+filesystem working directory. GitHub Actions validates the bundled entries without a fixed channel count
 before `flutter test -r expanded`. See `SEARCH_AND_BUNDLED_TEST_FIX_BN.md`.
+
+
+## v1.1.9 — Dynamic fallback JSON validation
+
+The GitHub channel feed is authoritative. The online list can have 511, 513, or
+any other number of valid channels (up to the parser safety limit) without
+changing the APK. GitHub Actions checks the bundled *offline fallback* JSON
+for well-formed entries and valid HTTP(S) URLs, but no longer requires exactly
+513 entries. Dart regression tests derive the expected count from the bundled
+asset, and correctly account for duplicate stream URLs that the parser removes.
+`assets/channels.json` is **not** overwritten by this patch; keep your latest
+GitHub copy if it currently has 511 entries.

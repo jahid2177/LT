@@ -204,7 +204,7 @@ class _PlaylistDialogState extends State<PlaylistDialog> {
               OutlinedButton.icon(
                 onPressed: _busy ? null : _bundledJson,
                 icon: const Icon(Icons.offline_pin),
-                label: const Text('Use bundled README.json channels (513)'),
+                label: const Text('Use bundled offline channel list'),
               ),
               const SizedBox(height: 11),
               Row(children: <Widget>[

@@ -9,7 +9,7 @@ void main() {
   );
 
   GuideSelection move(GuideSelection from, GuideDirection key,
-      {int channelCount = 513}) =>
+      {int channelCount = 12}) =>
       moveGuideSelection(
         selection: from,
         direction: key,
@@ -75,7 +75,7 @@ void main() {
 
   test('down at last channel does not wrap to first', () {
     const last = GuideSelection(
-        section: GuideSection.channels, actionIndex: 2, channelIndex: 512);
-    expect(move(last, GuideDirection.down).channelIndex, 512);
+        section: GuideSection.channels, actionIndex: 2, channelIndex: 11);
+    expect(move(last, GuideDirection.down).channelIndex, 11);
   });
 }

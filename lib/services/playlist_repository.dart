@@ -25,7 +25,8 @@ class PlaylistRepository {
   static const defaultChannelsUrl =
       'https://raw.githubusercontent.com/faria2177/live-tv-channels/refs/heads/main/channels.json';
 
-  /// Bundled 513-entry channel list supplied as README.json by the user.
+  /// Bundled offline fallback channel snapshot. Its entry count can change.
+  /// GitHub is the primary/authoritative source of live channel updates.
   /// The online GitHub URL remains the primary source for updates.
   static const bundledChannelsAsset = 'assets/channels.json';
 

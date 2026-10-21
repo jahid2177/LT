@@ -233,7 +233,7 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _focus.requestFocus();
     });
-    // Do NOT show the bundled 513-channel list before checking GitHub.
+    // Do NOT show the bundled fallback list before checking GitHub.
     unawaited(_refreshChannels(sourceUrl));
   }
 

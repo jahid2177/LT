@@ -4,7 +4,7 @@
 
 `https://raw.githubusercontent.com/faria2177/live-tv-channels/refs/heads/main/channels.json`
 
-- Every fresh app launch first requests this GitHub JSON. It does not show the old 513-channel snapshot while a first request is pending.
+- Every fresh app launch first requests this GitHub JSON. It does not show the bundled offline fallback snapshot while a first request is pending.
 - A valid HTTP 200 JSON feed replaces the channel catalog. The displayed channel count comes from the live feed; it is **not** hard-coded to 513.
 - GitHub is rechecked every two minutes while the app is in the foreground, on app resume (if enough time has passed), and by the guide's Refresh icon.
 - ETag/HTTP 304 revalidation uses only a previously validated GitHub catalog, never a bundled snapshot.
@@ -18,4 +18,4 @@ Replace the repository contents with the contents of `live_tv_remote/` in the fu
 
 ## Validation status
 
-The ZIP, Dart code structure, the included 513-entry offline catalog, and the new catalog parsing test have been inspected. A full Flutter build/test and physical TV playback test have not been executed in this environment.
+The ZIP, Dart code structure, the bundled offline catalog (with a variable entry count), and the new catalog parsing test have been inspected. A full Flutter build/test and physical TV playback test have not been executed in this environment.
