@@ -51,18 +51,24 @@ jobs:
       - name: Unit tests
         run: flutter test
 
-      - name: Build Android TV APK (arm64)
-        run: flutter build apk --release --target-platform android-arm64
+      - name: Build universal TV APK (32-bit ARM + 64-bit ARM)
+        run: flutter build apk --release --target-platform android-arm,android-arm64
+
+      - name: Verify the APK contains a 32-bit ARM Flutter engine
+        run: |
+          unzip -l build/app/outputs/flutter-apk/app-release.apk | grep -F 'lib/armeabi-v7a/libflutter.so'
+          unzip -l build/app/outputs/flutter-apk/app-release.apk | grep -F 'lib/armeabi-v7a/libapp.so'
+          unzip -l build/app/outputs/flutter-apk/app-release.apk | grep -F 'lib/arm64-v8a/libflutter.so' 
 
       - name: Build diagnostic TV APK (debug, separate install)
         if: always()
-        run: flutter build apk --debug --target-platform android-arm64
+        run: flutter build apk --debug --target-platform android-arm
 
       - name: Upload diagnostic APK
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Live-TV-Remote-AndroidTV-Diagnostic-debug
+          name: Live-TV-Remote-AndroidTV-ARM32-Diagnostic-debug
           path: build/app/outputs/flutter-apk/app-debug.apk
           if-no-files-found: warn
           retention-days: 14
@@ -81,7 +87,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: Live-TV-Remote-AndroidTV-arm64
+          name: Live-TV-Remote-AndroidTV-ARM32-ARM64-Universal
           path: build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 14
