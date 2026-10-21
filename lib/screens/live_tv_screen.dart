@@ -831,7 +831,7 @@ class _LiveTvScreenState extends State<LiveTvScreen> {
                                 width: 34,
                                 height: 34,
                                 fit: BoxFit.contain,
-                                errorBuilder: (_context, _error, _stackTrace) =>
+                                errorBuilder: (context, error, stackTrace) =>
                                     const Icon(Icons.tv, size: 27),
                               ),
                               const SizedBox(width: 9),

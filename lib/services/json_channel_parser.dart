@@ -122,41 +122,55 @@ class JsonChannelParser {
   String? _firstText(Map<String, dynamic> map, List<String> keys) {
     for (final key in keys) {
       final item = map[key];
-      if (item is String && item.trim().isNotEmpty) return item.trim();
+      if (item is String && item.trim().isNotEmpty) {
+        return item.trim();
+      }
     }
     return null;
   }
 
   String? _findStream(Map<String, dynamic> entry, Uri? baseUri, int depth) {
-    if (depth > 6) return null;
+    if (depth > 6) {
+      return null;
+    }
     final type = _firstText(entry, const <String>['type', 'format', 'source_type'])
         ?.toLowerCase();
     if (type != null &&
         (type.contains('iframe') || type.contains('youtube') ||
-         type.contains('embed') || type.contains('drm'))) return null;
+         type.contains('embed') || type.contains('drm'))) {
+      return null;
+    }
 
     for (final key in _streamKeys) {
       final value = entry[key];
       if (value is String) {
         final url = _validateUrl(value, baseUri);
-        if (url != null) return url;
+        if (url != null) {
+          return url;
+        }
       } else if (value is Map) {
         final nested = _findStream(
           value.map((key, value) => MapEntry('$key', value)),
           baseUri, depth + 1,
         );
-        if (nested != null) return nested;
+        if (nested != null) {
+          return nested;
+        }
       } else if (value is List) {
         for (final nested in value) {
           if (nested is String) {
             final url = _validateUrl(nested, baseUri);
-            if (url != null) return url;
+            if (url != null) {
+              return url;
+            }
           } else if (nested is Map) {
             final url = _findStream(
               nested.map((key, value) => MapEntry('$key', value)),
               baseUri, depth + 1,
             );
-            if (url != null) return url;
+            if (url != null) {
+              return url;
+            }
           }
         }
       }
@@ -167,14 +181,20 @@ class JsonChannelParser {
   String? _validateUrl(String raw, Uri? baseUri) {
     final value = raw.trim();
     if (value.isEmpty || value.startsWith('javascript:') ||
-        value.startsWith('data:')) return null;
+        value.startsWith('data:')) {
+      return null;
+    }
     final parsed = Uri.tryParse(value);
-    if (parsed == null) return null;
+    if (parsed == null) {
+      return null;
+    }
     final resolved = !parsed.hasScheme && baseUri != null
         ? baseUri.resolveUri(parsed)
         : parsed;
     if ((resolved.scheme != 'http' && resolved.scheme != 'https') ||
-        resolved.host.isEmpty) return null;
+        resolved.host.isEmpty) {
+      return null;
+    }
     return resolved.toString();
   }
 }

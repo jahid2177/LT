@@ -11,7 +11,7 @@ import 'm3u_parser.dart';
 import 'json_channel_parser.dart';
 
 class PlaylistRepository {
-  PlaylistRepository({M3uParser parser = const M3uParser()}) : _parser = parser;
+  PlaylistRepository([this._parser = const M3uParser()]);
 
   final M3uParser _parser;
   /// Default GitHub source supplied by the user; loaded on first startup.

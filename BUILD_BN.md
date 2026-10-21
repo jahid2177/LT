@@ -64,3 +64,17 @@ Build সফল হওয়া যাচাই করতে GitHub Actions-এর 
 - Android-এর `minSdk` 24 করা হয়েছে (`video_player` সমর্থনের জন্য)।
 - ৫০টি URL-এ `e=` মেয়াদ টোকেন জুলাই ২০২৬-এর; এগুলো আর কাজ নাও করতে পারে। এই অ্যাপ নতুন টোকেন তৈরি/DRM বাইপাস করে না।
 - বিস্তারিত দেখুন `CHANGES_README_JSON.md`।
+
+## ২১ অক্টোবর ২০২৬: GitHub Actions Gradle Build Fix
+
+GitHub run `logs_107174983477.zip` এ ১১টি unit test পাস করলেও APK বিল্ড ব্যর্থ হয়েছিল:
+`Gradle 8.11.1 is lower than Flutter 3.47.7 minimum supported version 8.14.0`।
+
+- `android/gradle/wrapper/gradle-wrapper.properties` → Gradle **8.14.5**।
+- `android/settings.gradle.kts` → Android Gradle Plugin **8.11.1** (API 36 compatible, AGP 9 নয়)।
+- Java 17 অপরিবর্তিত; Kotlin Gradle Plugin **2.1.20 → 2.2.21** (Gradle 8.14 / AGP 8.11.1 compatibility)।
+- GitHub Actions-এ Build-এর আগে `tools/check_android_toolchain.py` সংস্করণ যাচাই করবে।
+- `actions/checkout@v5` ও `actions/setup-java@v5` দিয়ে Node.js 20 warning কমানো হয়েছে।
+- Log-এ দেখা ৭টি Dart lint info সংশোধন করা হয়েছে।
+
+**নোট:** এখানে Flutter/Android SDK না থাকায় নতুন APK বিল্ড করে যাচাই করা যায়নি। GitHub Actions workflow চালিয়ে চূড়ান্ত যাচাই করুন।
