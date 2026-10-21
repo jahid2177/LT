@@ -37,6 +37,11 @@ jobs:
       - name: Verify Android Gradle compatibility
         run: python3 tools/check_android_toolchain.py
 
+      - name: Verify release-only SharedPreferences JNI regression workaround
+        run: |
+          python3 tools/check_shared_preferences_runtime.py
+          flutter pub deps --style=compact | grep shared_preferences_android
+
       - name: Dart static analysis
         run: flutter analyze --no-fatal-infos
 
