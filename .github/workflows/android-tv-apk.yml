@@ -45,11 +45,17 @@ jobs:
       - name: Check independent native Crash Finder setup
         run: python3 tools/check_crash_finder.py
 
+      - name: Verify Android TV Keep Screen Awake wiring
+        run: python3 tools/check_screen_awake.py
+
       - name: Dart static analysis
         run: flutter analyze --no-fatal-infos
 
+      - name: Verify all 513 bundled channels before Flutter tests
+        run: python3 tools/check_bundled_channels.py
+
       - name: Unit tests
-        run: flutter test
+        run: flutter test -r expanded
 
       - name: Build universal TV APK (32-bit ARM + 64-bit ARM)
         run: flutter build apk --release --target-platform android-arm,android-arm64
