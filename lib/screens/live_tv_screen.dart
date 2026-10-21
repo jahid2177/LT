@@ -8,6 +8,7 @@ import '../models/channel.dart';
 import '../services/m3u_parser.dart';
 import '../services/channel_identity.dart';
 import '../services/playlist_repository.dart';
+import '../services/crash_reporter.dart';
 import 'playlist_dialog.dart';
 
 class LiveTvScreen extends StatefulWidget {
@@ -72,6 +73,7 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
   @override
   void initState() {
     super.initState();
+    CrashReporter.stage('LiveTvScreen.initState');
     _remote.setMethodCallHandler(_handleNativeRemote);
     WidgetsBinding.instance.addObserver(this);
     _refreshTimer = Timer.periodic(_refreshInterval, (_) {
@@ -144,6 +146,7 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
   }
 
   Future<void> _restore() async {
+    CrashReporter.stage('Channel cache restore begin');
     try {
       final cached = await _repository.loadText();
       final storedUrl = await _repository.loadUrl();
@@ -200,6 +203,7 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
           });
         }
       }
+      CrashReporter.stage('Channel list displayed; requesting GitHub refresh');
       // Always check GitHub on launch, including when saved data exists.
       unawaited(_refreshChannels(sourceUrl));
     } catch (error) {
@@ -208,6 +212,7 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
         _loading = false;
         _sourceError = 'Unable to load saved channels: $error';
       });
+      CrashReporter.error('Channel cache restore', error);
       // A failed preference read must not prevent a fresh GitHub attempt.
       unawaited(_refreshChannels(PlaylistRepository.defaultChannelsUrl));
     }
@@ -221,6 +226,7 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
     final epoch = _selectionEpoch;
     final primary = url == PlaylistRepository.defaultChannelsUrl;
     _lastSyncCheck = DateTime.now();
+    CrashReporter.stage('GitHub JSON refresh starting');
     setState(() {
       _refreshing = true;
       _sourceError = null;
@@ -253,11 +259,13 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
         _githubEtag = result.etag;
         await _repository.storeGithubEtag(result.etag);
       }
+      CrashReporter.stage('GitHub JSON refresh successful');
       if (mounted) setState(() {
         _onlineConfirmed = true;
         _loading = false;
       });
-    } catch (error) {
+    } catch (error, stack) {
+      CrashReporter.error('GitHub JSON fetch failure', error, stack);
       if (mounted && epoch == _selectionEpoch && url == _playlistUrl) {
         setState(() {
           _loading = false;
@@ -410,6 +418,7 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
 
   void _tune(int target) {
     if (!mounted || target < 0 || target >= _channels.length) return;
+    CrashReporter.stage('Tuning channel ${target + 1} (without URL)');
     final generation = ++_playbackGeneration;
     _numberTimer?.cancel();
     final item = _channels[target];
@@ -465,6 +474,7 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
   }
 
   Future<void> _startPlaybackSerial(Uri uri, int generation) async {
+    CrashReporter.stage('Native video player initialization begin');
     // Dispose a previous player BEFORE allocating a new hardware decoder.
     await _releaseActivePlayer();
     if (!mounted || generation != _playbackGeneration) return;
@@ -496,7 +506,9 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
       });
       await player.play();
       ready = true;
+      CrashReporter.stage('Native video player playback started');
     } catch (error, trace) {
+      CrashReporter.error('Video player failure', error, trace);
       debugPrint('TV playback error: $error\n$trace');
       if (mounted && generation == _playbackGeneration) {
         setState(() {
@@ -983,6 +995,11 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
                     : () => unawaited(_refreshChannels(_playlistUrl)),
                 tooltip: 'Refresh online channels',
                 icon: const Icon(Icons.refresh),
+              ),
+              IconButton(
+                onPressed: () => unawaited(CrashReporter.openFinder()),
+                tooltip: 'Open Crash Finder',
+                icon: const Icon(Icons.bug_report_outlined),
               ),
               IconButton(
                 onPressed: _openSettings,

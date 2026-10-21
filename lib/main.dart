@@ -1,26 +1,40 @@
 import 'dart:async';
+import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'screens/live_tv_screen.dart';
+import 'services/crash_reporter.dart';
 
 void main() {
-  WidgetsFlutterBinding.ensureInitialized();
-  // A TV can reject a SystemChrome request during engine initialization.
-  // Never hold back the first Flutter frame on a platform-channel call.
-  runApp(const LiveTvApp());
-  WidgetsBinding.instance.addPostFrameCallback((_) {
-    unawaited(_configureImmersiveMode());
+  // Bind inside the same zone used to run the app, avoiding zone mismatch.
+  runZonedGuarded(() {
+    WidgetsFlutterBinding.ensureInitialized();
+    FlutterError.onError = (FlutterErrorDetails details) {
+      FlutterError.presentError(details);
+      CrashReporter.error('FlutterError', details.exception, details.stack);
+    };
+    PlatformDispatcher.instance.onError = (Object error, StackTrace stack) {
+      CrashReporter.error('Uncaught platform/Dart error', error, stack);
+      return true; // We recorded the error; do not terminate for Dart exceptions.
+    };
+    CrashReporter.stage('Dart main reached');
+    runApp(const LiveTvApp());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      CrashReporter.firstFrame();
+      unawaited(_configureImmersiveMode());
+    });
+  }, (Object error, StackTrace stack) {
+    CrashReporter.error('Uncaught zone error', error, stack);
   });
 }
 
 Future<void> _configureImmersiveMode() async {
   try {
-    // Landscape is already declared in AndroidManifest.xml.
     await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-  } catch (error) {
-    debugPrint('Optional TV immersive mode was unavailable: $error');
+  } catch (error, stack) {
+    CrashReporter.error('Optional immersive TV setup', error, stack);
   }
 }
 

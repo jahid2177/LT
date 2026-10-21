@@ -179,3 +179,18 @@ No blanket `-ignorewarnings` or R8 disablement is used. The 513-channel JSON sna
 ## Android TV `SharedPreferencesApiRegistrar.getAll` startup crash — 2026-10-21
 
 Android release startup bug in `shared_preferences_android` 2.5.0 fixed by pinning **2.4.28** and adding targeted Kotlin R8 keep rules. CI checks the resolved version to prevent regression. See [`FIX_ANDROID_TV_SHARED_PREFS_BN.md`](FIX_ANDROID_TV_SHARED_PREFS_BN.md) for Bengali testing instructions. GitHub `channels.json` stays the primary, auto-refreshed source.
+
+## Android TV Crash Finder (v1.1.3)
+
+If the TV closes the application immediately even though the same APK works on
+an Android phone, start the **Live TV Crash Finder** launcher icon after the
+crash. This is a completely native Activity and does not load the Flutter
+engine, plugins, or video decoder. It keeps on-device logs for uncaught
+Java/Kotlin exceptions, Flutter errors, native startup steps, and (on Android
+11+) Android process-exit reasons. Use **Save TXT** or **Share** to collect the
+report. For a native signal crash, the full stack may still require ADB logcat.
+
+Instructions in Bengali: [`CRASH_FINDER_TV_BN.md`](CRASH_FINDER_TV_BN.md).
+
+No crash reports are automatically sent to a server. The primary JSON catalog
+remains the GitHub URL and the existing two-minute refresh remains enabled.
