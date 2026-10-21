@@ -9,6 +9,7 @@ import '../services/m3u_parser.dart';
 import '../services/channel_identity.dart';
 import '../services/playlist_repository.dart';
 import '../services/crash_reporter.dart';
+import '../services/guide_focus_navigation.dart';
 import 'playlist_dialog.dart';
 
 class LiveTvScreen extends StatefulWidget {
@@ -24,6 +25,9 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
   final _repository = PlaylistRepository();
   final _focus = FocusNode(debugLabel: 'TV remote input');
   final _listScroll = ScrollController();
+  GuideSection _guideSection = GuideSection.channels;
+  int _toolbarIndex = 0;
+  static const _guideActionCount = 5;
 
   List<TvChannel> _channels = <TvChannel>[];
   Set<String> _favorites = <String>{};
@@ -139,6 +143,8 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
       _currentIndex = -1;
       _highlightIndex = preferredIndex.clamp(0, _channels.length - 1).toInt();
       _drawerVisible = true;
+      _guideSection = GuideSection.channels;
+      _toolbarIndex = 0;
       _playerLoading = false;
       _infoVisible = false;
     });
@@ -355,6 +361,9 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
         } else if (_drawerVisible && _channels.isNotEmpty) {
           _highlightIndex = 0;
         }
+        if (_drawerVisible && newVisible.isEmpty) {
+          _guideSection = GuideSection.toolbar;
+        }
       } else {
         _favoritesOnly = false;
         _drawerVisible = false;
@@ -552,11 +561,14 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
     final visible = _visibleIndices;
     setState(() {
       _drawerVisible = true;
+      _guideSection = visible.isEmpty ? GuideSection.toolbar : GuideSection.channels;
+      _toolbarIndex = 0;
       _highlightIndex = visible.indexOf(_currentIndex);
       if (_highlightIndex < 0) _highlightIndex = 0;
       _infoVisible = false;
     });
     _ensureHighlightedVisible();
+    _focus.requestFocus();
   }
 
   void _ensureHighlightedVisible() {
@@ -585,6 +597,9 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
       _favoritesOnly = !_favoritesOnly;
       _highlightIndex = 0;
     });
+    if (_visibleIndices.isEmpty) {
+      _guideSection = GuideSection.toolbar;
+    }
     _ensureHighlightedVisible();
   }
 
@@ -599,16 +614,58 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
     _focus.requestFocus();
   }
 
-  void _onDirectional(int delta) {
-    if (!_drawerVisible) {
-      _changeChannel(delta);
+  void _moveGuideFocus(GuideDirection direction) {
+    final selection = moveGuideSelection(
+      selection: GuideSelection(
+        section: _guideSection,
+        actionIndex: _toolbarIndex,
+        channelIndex: _highlightIndex,
+      ),
+      direction: direction,
+      actionCount: _guideActionCount,
+      channelCount: _visibleIndices.length,
+    );
+    if (selection.closeGuide) {
+      setState(() => _drawerVisible = false);
       return;
     }
-    final visible = _visibleIndices;
-    if (visible.isEmpty) return;
-    setState(() => _highlightIndex = wrapChannelIndex(
-        _highlightIndex, delta, visible.length));
-    _ensureHighlightedVisible();
+    setState(() {
+      _guideSection = selection.section;
+      _toolbarIndex = selection.actionIndex;
+      _highlightIndex = selection.channelIndex;
+    });
+    if (_guideSection == GuideSection.channels) _ensureHighlightedVisible();
+  }
+
+  void _onDirectional(int delta) {
+    if (_drawerVisible) {
+      _moveGuideFocus(delta < 0 ? GuideDirection.up : GuideDirection.down);
+    } else {
+      _changeChannel(delta);
+    }
+  }
+
+  void _activateToolbarAction(int index) {
+    switch (index) {
+      case 0:
+        _toggleFilter();
+        break;
+      case 1:
+        if (_playlistUrl.isNotEmpty && !_refreshing) {
+          unawaited(_refreshChannels(_playlistUrl));
+        }
+        break;
+      case 2:
+        unawaited(CrashReporter.openFinder());
+        break;
+      case 3:
+        unawaited(_openSettings());
+        break;
+      case 4:
+        setState(() => _drawerVisible = false);
+        break;
+    }
+    if (mounted && !_dialogOpen) _focus.requestFocus();
   }
 
   void _onSelect() {
@@ -616,8 +673,15 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
       _openDrawer();
       return;
     }
+    if (_guideSection == GuideSection.toolbar) {
+      _activateToolbarAction(_toolbarIndex);
+      return;
+    }
     final visible = _visibleIndices;
-    if (visible.isEmpty) return;
+    if (visible.isEmpty) {
+      setState(() => _guideSection = GuideSection.toolbar);
+      return;
+    }
     _tune(visible[_highlightIndex.clamp(0, visible.length - 1).toInt()]);
     _focus.requestFocus();
   }
@@ -650,13 +714,16 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
       _onDirectional(1);
     } else if (key == LogicalKeyboardKey.arrowLeft) {
       if (_drawerVisible) {
-        setState(() => _drawerVisible = false);
+        _moveGuideFocus(GuideDirection.left);
       } else {
         _openDrawer();
       }
     } else if (key == LogicalKeyboardKey.arrowRight) {
-      if (_drawerVisible) setState(() => _drawerVisible = false);
-      _showInfo();
+      if (_drawerVisible) {
+        _moveGuideFocus(GuideDirection.right);
+      } else {
+        _showInfo();
+      }
     } else if (key == LogicalKeyboardKey.enter ||
         key == LogicalKeyboardKey.select ||
         key == LogicalKeyboardKey.space) {
@@ -706,7 +773,7 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
           child: Stack(
             fit: StackFit.expand,
             children: <Widget>[
-              _buildPlayer(),
+              ExcludeFocus(excluding: _drawerVisible, child: _buildPlayer()),
               if (_infoVisible && _currentChannel != null && !_drawerVisible)
                 _buildInfoOverlay(),
               if (_drawerVisible) _buildChannelDrawer(),
@@ -959,12 +1026,73 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
     );
   }
 
+  // Keys are handled by the parent Focus widget. These buttons intentionally
+  // exclude Flutter's automatic focus traversal so inexpensive TV remotes work
+  // predictably even if a player surface would otherwise steal focus.
+  Widget _guideAction({
+    required int index,
+    required IconData icon,
+    required String label,
+    required VoidCallback? onPressed,
+  }) {
+    final selected = _guideSection == GuideSection.toolbar &&
+        _toolbarIndex == index;
+    return Expanded(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+        child: Semantics(
+          label: label,
+          button: true,
+          selected: selected,
+          enabled: onPressed != null,
+          child: ExcludeFocus(
+            child: Tooltip(
+              message: label,
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  key: Key('guide_action_$index'),
+                  onTap: onPressed,
+                  borderRadius: BorderRadius.circular(12),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 115),
+                    height: 54,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(12),
+                      color: selected
+                          ? const Color(0xFF3659C8)
+                          : const Color(0xFF222B45),
+                      border: Border.all(
+                        color: selected
+                            ? const Color(0xFFF7FAFF)
+                            : const Color(0xFF46526B),
+                        width: selected ? 2.5 : 1,
+                      ),
+                      boxShadow: selected
+                          ? const [BoxShadow(color: Color(0x885E90FF), blurRadius: 14)]
+                          : null,
+                    ),
+                    alignment: Alignment.center,
+                    child: Icon(icon, color: onPressed == null
+                        ? const Color(0xFF79859C)
+                        : Colors.white, size: 28),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildChannelDrawer() {
     final indices = _visibleIndices;
+    final listFocused = _guideSection == GuideSection.channels;
     return Align(
       alignment: Alignment.centerLeft,
       child: Container(
-        width: 405,
+        width: 440,
         margin: const EdgeInsets.all(12),
         decoration: BoxDecoration(
           color: const Color(0xF50F1525),
@@ -976,39 +1104,51 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
         ),
         child: Column(children: <Widget>[
           Padding(
-            padding: const EdgeInsets.fromLTRB(18, 15, 8, 12),
+            padding: const EdgeInsets.fromLTRB(15, 14, 15, 8),
             child: Row(children: <Widget>[
               const Icon(Icons.live_tv, color: Color(0xFFAFA0FF)),
-              const SizedBox(width: 10),
-              const Expanded(
-                child: Text('CHANNEL GUIDE',
-                    style: TextStyle(fontWeight: FontWeight.w800, fontSize: 17)),
-              ),
-              IconButton(
+              const SizedBox(width: 9),
+              const Text('CHANNEL GUIDE',
+                  style: TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+              const Spacer(),
+              if (_guideSection == GuideSection.toolbar)
+                const Text('← →  OK',
+                    style: TextStyle(color: Color(0xFFBCD2FF), fontSize: 14)),
+            ]),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 2, 12, 10),
+            child: Row(children: <Widget>[
+              _guideAction(
+                index: 0,
+                icon: _favoritesOnly ? Icons.star : Icons.star_border,
+                label: _favoritesOnly ? 'Show all channels' : 'Favorites only',
                 onPressed: _toggleFilter,
-                tooltip: _favoritesOnly ? 'Show all' : 'Favorites only',
-                icon: Icon(_favoritesOnly ? Icons.star : Icons.star_border),
               ),
-              IconButton(
+              _guideAction(
+                index: 1,
+                icon: Icons.refresh,
+                label: 'Refresh channels from GitHub',
                 onPressed: _playlistUrl.isEmpty || _refreshing
-                    ? null
-                    : () => unawaited(_refreshChannels(_playlistUrl)),
-                tooltip: 'Refresh online channels',
-                icon: const Icon(Icons.refresh),
+                    ? null : () => unawaited(_refreshChannels(_playlistUrl)),
               ),
-              IconButton(
+              _guideAction(
+                index: 2,
+                icon: Icons.bug_report_outlined,
+                label: 'Crash Finder',
                 onPressed: () => unawaited(CrashReporter.openFinder()),
-                tooltip: 'Open Crash Finder',
-                icon: const Icon(Icons.bug_report_outlined),
               ),
-              IconButton(
+              _guideAction(
+                index: 3,
+                icon: Icons.settings,
+                label: 'Settings and playlists',
                 onPressed: _openSettings,
-                tooltip: 'Manage playlist',
-                icon: const Icon(Icons.settings),
               ),
-              IconButton(
+              _guideAction(
+                index: 4,
+                icon: Icons.close,
+                label: 'Close channel guide',
                 onPressed: () => setState(() => _drawerVisible = false),
-                icon: const Icon(Icons.close),
               ),
             ]),
           ),
@@ -1030,7 +1170,8 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
           const Divider(height: 1),
           Expanded(
             child: indices.isEmpty
-                ? const Center(child: Text('No favorites yet. Press F while watching.',
+                ? const Center(child: Text(
+                    'No favorites yet. Use ← → at the top to select Show All.',
                     textAlign: TextAlign.center))
                 : ListView.builder(
                     controller: _listScroll,
@@ -1041,58 +1182,64 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
                       final channel = _channels[channelIndex];
                       final highlighted = listIndex == _highlightIndex;
                       final playing = channelIndex == _currentIndex;
-                      return InkWell(
-                        onTap: () => _tune(channelIndex),
-                        child: Container(
-                          margin: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
-                          padding: const EdgeInsets.symmetric(horizontal: 13),
-                          decoration: BoxDecoration(
-                            color: highlighted
-                                ? const Color(0xFF5946A8)
-                                : playing ? const Color(0xFF242D48) : Colors.transparent,
-                            borderRadius: BorderRadius.circular(10),
-                            border: highlighted ? Border.all(color: const Color(0xFFBDAEFF), width: 1.5) : null,
+                      return ExcludeFocus(
+                        child: InkWell(
+                          onTap: () => _tune(channelIndex),
+                          child: Container(
+                            margin: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+                            padding: const EdgeInsets.symmetric(horizontal: 13),
+                            decoration: BoxDecoration(
+                              color: highlighted
+                                  ? (listFocused ? const Color(0xFF5946A8)
+                                      : const Color(0xFF303A5D))
+                                  : playing ? const Color(0xFF242D48) : Colors.transparent,
+                              borderRadius: BorderRadius.circular(10),
+                              border: highlighted && listFocused
+                                  ? Border.all(color: const Color(0xFFDDD2FF), width: 2)
+                                  : null,
+                            ),
+                            child: Row(children: <Widget>[
+                              SizedBox(
+                                width: 40,
+                                child: Text('${channelIndex + 1}',
+                                    style: const TextStyle(fontSize: 16,
+                                        fontWeight: FontWeight.bold)),
+                              ),
+                              if (channel.logo.isNotEmpty) ...<Widget>[
+                                Image.network(
+                                  channel.logo,
+                                  width: 34,
+                                  height: 34,
+                                  fit: BoxFit.contain,
+                                  errorBuilder: (context, error, stackTrace) =>
+                                      const Icon(Icons.tv, size: 27),
+                                ),
+                                const SizedBox(width: 9),
+                              ],
+                              Expanded(
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: <Widget>[
+                                    Text(channel.name, maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(fontWeight: FontWeight.w600)),
+                                    Text(channel.group,
+                                        maxLines: 1, overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(fontSize: 11,
+                                            color: Color(0xFFADB9D2))),
+                                  ],
+                                ),
+                              ),
+                              if (_favorites.contains(stableChannelKey(_channels, channelIndex)))
+                                const Icon(Icons.star, color: Color(0xFFFFCC63), size: 19),
+                              if (playing) ...<Widget>[
+                                const SizedBox(width: 5),
+                                const Icon(Icons.graphic_eq, size: 20,
+                                    color: Color(0xFFBEADFF)),
+                              ],
+                            ]),
                           ),
-                          child: Row(children: <Widget>[
-                            SizedBox(
-                              width: 40,
-                              child: Text('${channelIndex + 1}',
-                                  style: const TextStyle(fontSize: 16,
-                                      fontWeight: FontWeight.bold)),
-                            ),
-                            if (channel.logo.isNotEmpty) ...<Widget>[
-                              Image.network(
-                                channel.logo,
-                                width: 34,
-                                height: 34,
-                                fit: BoxFit.contain,
-                                errorBuilder: (context, error, stackTrace) =>
-                                    const Icon(Icons.tv, size: 27),
-                              ),
-                              const SizedBox(width: 9),
-                            ],
-                            Expanded(
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: <Widget>[
-                                  Text(channel.name, maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(fontWeight: FontWeight.w600)),
-                                  Text(channel.group,
-                                      maxLines: 1, overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(fontSize: 11,
-                                          color: Color(0xFFADB9D2))),
-                                ],
-                              ),
-                            ),
-                            if (_favorites.contains(stableChannelKey(_channels, _currentIndex)))
-                              const Icon(Icons.star, color: Color(0xFFFFCC63), size: 19),
-                            if (playing) ...<Widget>[
-                              const SizedBox(width: 5),
-                              const Icon(Icons.graphic_eq, size: 20, color: Color(0xFFBEADFF)),
-                            ],
-                          ]),
                         ),
                       );
                     },
@@ -1100,8 +1247,8 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
           ),
           const Divider(height: 1),
           const Padding(
-            padding: EdgeInsets.all(13),
-            child: Text('↑ ↓ highlight  •  OK watch  •  ← close  •  MENU guide',
+            padding: EdgeInsets.all(12),
+            child: Text('↑ from first channel → toolbar • ← → choose icon • OK select • BACK close',
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 12, color: Color(0xFF97A9C8))),
           ),
@@ -1109,4 +1256,5 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
       ),
     );
   }
+
 }

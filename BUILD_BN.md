@@ -18,10 +18,10 @@
 ## রিমোট দিয়ে ব্যবহার
 
 - **CH+ / CH−** — পরের / আগের চ্যানেল।
-- **D-pad UP / DOWN** — সাধারণ অবস্থায় চ্যানেল পরিবর্তন। Guide খোলা থাকলে চ্যানেল নির্বাচন।
-- **OK** — Channel Guide খুলবে; Guide-এ OK চাপলে চ্যানেল চলবে।
-- **LEFT** — Guide খুলবে বা বন্ধ হবে।
-- **RIGHT** — চ্যানেলের তথ্য দেখাবে / Guide বন্ধ করবে।
+- **D-pad UP / DOWN** — সাধারণ অবস্থায় চ্যানেল পরিবর্তন। Guide খোলা থাকলে চ্যানেল নির্বাচন; প্রথম চ্যানেল থেকে UP চাপলে ওপরের আইকনগুলোতে ফোকাস যাবে।
+- **OK** — Channel Guide খুলবে; Guide-এর তালিকায় চ্যানেল চালাবে, আর ওপরের আইকনে ফোকাস থাকলে সেই action (Refresh/Settings ইত্যাদি) চালাবে।
+- **LEFT** — Guide বন্ধ থাকলে খুলবে। Guide-এর চ্যানেল তালিকা থেকে বন্ধ করবে; উপরের আইকনে থাকলে আগের আইকন নির্বাচন করবে।
+- **RIGHT** — Guide বন্ধ থাকলে তথ্য দেখাবে। Guide খোলা থাকলে চ্যানেল তালিকা থেকে ওপরের আইকনে যাবে; ওপরের আইকনে থাকলে পরেরটি নির্বাচন করবে।
 - **BACK** — Guide বন্ধ বা তথ্য লুকানো।
 - **Volume+ / Volume−** — Android TV-এর নিজস্ব ভলিউম কন্ট্রোল।
 - **0–9** — চ্যানেল নম্বর টাইপ করে এক সেকেন্ড পর সেই চ্যানেলে যাওয়া।
@@ -94,6 +94,10 @@ GitHub run `logs_107174983477.zip` এ ১১টি unit test পাস কর�
 
 সংশোধিত ফাইল GitHub-এ আপলোড করে **Actions → Android TV APK → Run workflow** চালান। এটি এখনো এখানে APK build করে পরীক্ষা করা হয়নি। বিস্তারিত `BUILD_FIX_R8_2026-10-21.md`।
 
-## Haier Android TV (32-bit ARM): নতুন diagnostic build v1.1.4
+## Android TV Remote UI Fix (v1.1.5)
 
-Release APK-তে `armeabi-v7a` ও `arm64-v8a` উভয় সমর্থন আছে। TV-তে অ্যাপ খুলে Native start screen থেকে **START LIVE TV** চাপুন। বন্ধ হয়ে গেলে আবার একই অ্যাপ খুলে **OPEN CRASH FINDER → REFRESH → SAVE TXT** করুন। নির্দেশনা: `TV_ARM32_CRASH_TEST_BN.md`।
+**TV-তে অ্যাপ সরাসরি Live TV খুলবে।** আগের `START LIVE TV / OPEN CRASH FINDER` নীল স্টার্ট স্ক্রিন আর থাকবে না। তবে Crash Finder পুরোপুরি মুছে ফেলা হয়নি; Channel Guide-এর Bug আইকন বা ADB দিয়ে প্রয়োজনে চালানো যাবে।
+
+**উপরের আইকনগুলো ব্যবহার:** Channel Guide খুলে প্রথম চ্যানেলে থাকা অবস্থায় **UP** অথবা যেকোনো চ্যানেলে **RIGHT** চাপুন। প্রথমে Favorites-এ নীল/সাদা ফোকাস বর্ডার দেখা যাবে। **RIGHT** দিয়ে Refresh → Bug → Settings → Close নির্বাচন করুন; **OK** দিয়ে চালান। **LEFT** আগের আইকন; **DOWN** চ্যানেল তালিকায় ফিরে যাবে।
+
+মূল GitHub `channels.json`, ২ মিনিটের Auto Sync, ARM32/ARM64 universal APK ও ৫১৩টি backup channel অক্ষত। GitHub Actions বিল্ড ও বাস্তব TV-তে পরীক্ষা করতে হবে।

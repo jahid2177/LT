@@ -1,17 +1,16 @@
-# Live TV Remote — Android TV Crash Finder (v1.1.4)
+# Live TV Remote — Android TV Crash Finder (v1.1.5)
 
 ## কেন এই সংস্করণ
 
 Android মোবাইলে চললেও Android TV-তে অ্যাপ চালু করামাত্র বন্ধ হয়ে যাচ্ছে। TV-এর প্রকৃত crash log এখনো পাওয়া যায়নি, তাই শুধু অনুমান করে সেটিকে সমাধান হয়েছে বলা যাবে না। এই সংস্করণে ডিভাইস থেকেই রিপোর্ট বের করার ব্যবস্থা রয়েছে।
 
-## Android TV-তে যেভাবে ব্যবহার করবেন
+## Android TV-তে যেভাবে ব্যবহার করবেন (v1.1.5)
 
-1. নতুন `app-release.apk` ইনস্টল করুন। পুরোনো অ্যাপের একই application ID-তে আপডেট দিলে আগের ডেটা থাকবে (একই signing key লাগবে)।
-2. TV-এর অ্যাপ তালিকায় দুটি আইকন দেখার কথা: **Live TV Remote** ও **Live TV Crash Finder**। কিছু TV launcher দ্বিতীয় আইকন দেখায় না; সে ক্ষেত্রে নিচে ADB দিয়ে খোলার বিকল্প আছে।
-3. প্রথমে **Live TV Remote** চালান। যদি সঙ্গে সঙ্গে বন্ধ হয়ে যায়, **Live TV Crash Finder** খুলুন।
-4. **Refresh** চাপুন। নিচের রিপোর্টে `FATAL_JAVA_CRASH`, `DART_ERROR`, `PREVIOUS_TV_STARTUP_INCOMPLETE` অথবা `ANDROID PROCESS EXIT HISTORY` দেখুন।
-5. **Save TXT** চাপুন। Android 10+ TV-তে `Downloads/LiveTVRemote/live_tv_crash_....txt` তৈরি হওয়ার কথা। **Share** দিয়ে রিপোর্ট পাঠাতে পারেন। TV-তে শেয়ারিং অ্যাপ না থাকলে Save TXT বা Copy ব্যবহার করুন।
-6. রিপোর্ট ফাইলটি ChatGPT-তে আপলোড করুন। **Clear** চাপলে আগের লগ মুছে যাবে—রিপোর্ট সংগ্রহের আগে Clear করবেন না।
+1. অ্যাপ আইকন থেকে **Live TV Remote** সরাসরি খুলুন। আগের Diagnostic Start Screen নেই।
+2. Channel Guide-এ প্রথম চ্যানেল থেকে **UP** অথবা তালিকা থেকে **RIGHT** চাপুন।
+3. ওপরের Bug আইকনে **LEFT/RIGHT** দিয়ে গিয়ে **OK** চাপুন: Native **Crash Finder** খুলবে।
+4. **Refresh → Save TXT** ব্যবহার করুন। Clear চাপার আগে রিপোর্ট সংরক্ষণ করুন।
+5. অ্যাপ চালুই না হলে নিচে দেওয়া ADB কমান্ড দিয়ে Crash Finder সরাসরি খুলুন।
 
 রিপোর্ট মূল অ্যাপের local storage-এ থাকে। Debug APK-এর package আলাদা (`com.example.live_tv_remote.diagnostic`), তাই সেটির Crash Finder release অ্যাপের রিপোর্ট দেখতে পাবে না। **Release APK-এর Crash Finder** ব্যবহার করবেন।
 
@@ -62,4 +61,4 @@ Live TV শুরু হলে, অ্যাপে ফিরে এলে এব
 
 ## যাচাইয়ের অবস্থা
 
-ম্যানিফেস্ট, Native launcher, error-handler wiring, source paths ও GitHub URL-এর structural check চালানো হয়েছে। এই environment-এ Flutter SDK ও Android TV ডিভাইস নেই—APK build ও TV-তে runtime যাচাই করা হয়নি।
+ম্যানিফেস্ট, সরাসরি Flutter launcher, error-handler wiring, source paths ও GitHub URL-এর structural check চালানো হয়েছে। এই environment-এ Flutter SDK ও Android TV ডিভাইস নেই—APK build ও TV-তে runtime যাচাই করা হয়নি।

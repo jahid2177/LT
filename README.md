@@ -47,10 +47,10 @@ Android TV / Google TV-এর জন্য **remote-first IPTV Live TV app**, wr
 | Remote key | Playback screen | Channel guide |
 |---|---|---|
 | CH+ / CH− | Next / previous channel | Next / previous channel (guide closes) |
-| D-pad UP / DOWN | Previous / next channel | Move highlight |
-| D-pad LEFT | Open guide | Close guide |
-| D-pad RIGHT | Show channel info | Close guide |
-| OK / SELECT / Enter | Open guide | Tune highlighted channel |
+| D-pad UP / DOWN | Previous / next channel | Move channel highlight; UP from first row enters toolbar, DOWN returns to list |
+| D-pad LEFT | Open guide | Move to previous toolbar icon; on channel list, close guide |
+| D-pad RIGHT | Show channel info | Open top toolbar from channel list / move to next icon |
+| OK / SELECT / Enter | Open guide | Tune selected channel / activate selected toolbar icon |
 | GUIDE / MENU | Open guide | Keep guide open |
 | BACK / Esc | Hide info / open guide | Close guide |
 | 0–9 | Direct channel number (after ~1 second) | Direct channel number |
@@ -180,18 +180,23 @@ No blanket `-ignorewarnings` or R8 disablement is used. The 513-channel JSON sna
 
 Android release startup bug in `shared_preferences_android` 2.5.0 fixed by pinning **2.4.28** and adding targeted Kotlin R8 keep rules. CI checks the resolved version to prevent regression. See [`FIX_ANDROID_TV_SHARED_PREFS_BN.md`](FIX_ANDROID_TV_SHARED_PREFS_BN.md) for Bengali testing instructions. GitHub `channels.json` stays the primary, auto-refreshed source.
 
-## Android TV 32-bit Crash Diagnostics (v1.1.4)
+## Android TV remote focus and direct startup (v1.1.5)
 
-If the TV closes the application immediately even though the same APK works on
-an Android phone, open **Live TV Remote**, choose **START LIVE TV**, then,
-if it crashes, reopen **Live TV Remote** and choose **OPEN CRASH FINDER**.
-The start screen and Crash Finder are native and do not load Flutter, plugins,
-or any video decoder. It keeps on-device logs for uncaught
-Java/Kotlin exceptions, Flutter errors, native startup steps, and (on Android
-11+) Android process-exit reasons. Use **Save TXT** or **Share** to collect the
-report. For a native signal crash, the full stack may still require ADB logcat.
+Android TV now launches **directly into the Flutter channel guide/player**.
+The temporary blue diagnostic Start Screen and its **OPEN CRASH FINDER** button
+have been removed. The independent native Crash Finder still exists, but can
+be opened from the **bug icon in the channel-guide toolbar** or by ADB:
 
-Haier Android 11 / 32-bit specific instructions: [`TV_ARM32_CRASH_TEST_BN.md`](TV_ARM32_CRASH_TEST_BN.md).
+```bash
+adb shell am start -n com.example.live_tv_remote/.CrashFinderActivity
+```
 
-No crash reports are automatically sent to a server. The primary JSON catalog
-remains the GitHub URL and the existing two-minute refresh remains enabled.
+In the channel guide, press **UP from the first channel** (or **RIGHT from
+any channel**) to focus the toolbar. Press **LEFT/RIGHT** to choose Favorites,
+Refresh GitHub, Crash Finder, Settings, or Close, then **OK** to activate.
+Press **DOWN** to return to the channel list. The focused icon has a visible
+white/blue border. Mobile touch input remains enabled.
+
+The GitHub JSON source, two-minute automatic refresh, offline cache and 513
+bundled channels are unchanged. Run the GitHub Actions Flutter tests and APK
+build to validate on an actual Android TV device.

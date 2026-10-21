@@ -11,23 +11,8 @@
         android:banner="@drawable/tv_banner"
         android:usesCleartextTraffic="true"
         android:allowBackup="false">
-        <!-- Only ONE launcher. This native entry works even when Flutter cannot start,
-             and lets remote users reopen the independent crash report. -->
-        <activity
-            android:name=".TvHomeActivity"
-            android:exported="true"
-            android:label="Live TV Remote"
-            android:screenOrientation="landscape"
-            android:theme="@android:style/Theme.Material.NoActionBar">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
-            </intent-filter>
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
+        <!-- Open the real Flutter TV application directly, without a
+             diagnostic home screen or an extra OK press. -->
         <!-- Both destinations remain independent and explicit, not extra launcher icons. -->
         <activity
             android:name=".CrashFinderActivity"
@@ -48,6 +33,14 @@
             <meta-data
                 android:name="io.flutter.embedding.android.NormalTheme"
                 android:resource="@style/NormalTheme" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+            </intent-filter>
         </activity>
         <meta-data android:name="flutterEmbedding" android:value="2" />
     </application>
