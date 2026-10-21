@@ -46,6 +46,17 @@ jobs:
       - name: Build Android TV APK (arm64)
         run: flutter build apk --release --target-platform android-arm64
 
+      # Preserve R8's generated diagnostics on a failed build. If a future
+      # plugin adds a genuinely required dependency, the next error remains visible.
+      - name: Upload Android build diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Live-TV-Remote-Android-R8-Diagnostics
+          path: build/app/outputs/mapping/release/missing_rules.txt
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
