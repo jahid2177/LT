@@ -26,6 +26,10 @@ class _LiveTvScreenState extends State<LiveTvScreen> {
   List<TvChannel> _channels = <TvChannel>[];
   Set<String> _favorites = <String>{};
   VideoPlayerController? _controller;
+  VideoPlayerController? _activePlayer;
+  // Serializing ExoPlayer initialization/disposal avoids overlapping decoders
+  // on TV chipsets that only support one hardware video decoder.
+  Future<void> _playbackTask = Future<void>.value();
   int _currentIndex = -1;
   int _highlightIndex = 0;
   int _playbackGeneration = 0;
@@ -80,6 +84,21 @@ class _LiveTvScreenState extends State<LiveTvScreen> {
     return null;
   }
 
+  // Do not start an unverified HLS stream automatically during Activity
+  // creation. Some TV firmware terminates the process in a native decoder
+  // before Flutter can display or catch an error. Show a usable guide first.
+  void _showStartupGuide(int preferredIndex) {
+    if (!mounted || _channels.isEmpty) return;
+    setState(() {
+      _currentIndex = -1;
+      _highlightIndex = preferredIndex.clamp(0, _channels.length - 1).toInt();
+      _drawerVisible = true;
+      _playerLoading = false;
+      _infoVisible = false;
+    });
+    _ensureHighlightedVisible();
+  }
+
   Future<void> _restore() async {
     try {
       final cached = await _repository.loadText();
@@ -109,7 +128,7 @@ class _LiveTvScreenState extends State<LiveTvScreen> {
             _loading = false;
           });
           final index = channels.indexWhere((channel) => channel.url == last);
-          _tune(index < 0 ? 0 : index);
+          _showStartupGuide(index < 0 ? 0 : index);
         } catch (error) {
           setState(() => _sourceError = 'Saved channel list is invalid: $error');
         }
@@ -129,7 +148,7 @@ class _LiveTvScreenState extends State<LiveTvScreen> {
             _loading = false;
           });
           final index = bundledChannels.indexWhere((e) => e.url == last);
-          _tune(index < 0 ? 0 : index);
+          _showStartupGuide(index < 0 ? 0 : index);
         } catch (error) {
           if (!mounted) return;
           setState(() {
@@ -216,6 +235,7 @@ class _LiveTvScreenState extends State<LiveTvScreen> {
   Future<void> _setPlaylist(PlaylistSelection selection,
       {bool fromRefresh = false}) async {
     if (!fromRefresh) _selectionEpoch++;
+    final previouslyPlaying = _currentIndex >= 0;
     final selectedUrl = _currentChannel?.url ?? _preferredUrl;
     final matchingIndex = selection.channels.indexWhere((e) => e.url == selectedUrl);
     setState(() {
@@ -223,13 +243,39 @@ class _LiveTvScreenState extends State<LiveTvScreen> {
       _cachedPlaylistText = selection.text;
       _playlistUrl = selection.url ?? '';
       _favoritesOnly = false;
-      _drawerVisible = false;
       _playerError = null;
       _sourceError = null;
       _loading = false;
+      if (fromRefresh && previouslyPlaying && matchingIndex >= 0) {
+        // The selected stream is unchanged: do NOT recreate its ExoPlayer.
+        _currentIndex = matchingIndex;
+      } else if (fromRefresh && !previouslyPlaying) {
+        _currentIndex = -1;
+        _highlightIndex = matchingIndex < 0 ? 0 : matchingIndex;
+        _drawerVisible = true;
+      } else {
+        _drawerVisible = false;
+      }
     });
     await _repository.storePlaylist(selection.text, url: selection.url);
     if (!mounted) return;
+    if (fromRefresh) {
+      if (previouslyPlaying && matchingIndex < 0) {
+        // Source removed the currently playing station; let the viewer choose.
+        _playbackGeneration++;
+        setState(() {
+          _currentIndex = -1;
+          _highlightIndex = 0;
+          _drawerVisible = true;
+          _controller = null;
+          _playerLoading = false;
+        });
+        _queuePlayerCleanup();
+      }
+      _ensureHighlightedVisible();
+      return;
+    }
+    // A user explicitly imported/selected a different playlist: play it.
     _tune(matchingIndex == -1 ? 0 : matchingIndex);
   }
 
@@ -260,7 +306,6 @@ class _LiveTvScreenState extends State<LiveTvScreen> {
     if (!mounted || target < 0 || target >= _channels.length) return;
     final generation = ++_playbackGeneration;
     _numberTimer?.cancel();
-    final previous = _controller;
     final item = _channels[target];
     final uri = Uri.tryParse(item.url);
     setState(() {
@@ -271,55 +316,97 @@ class _LiveTvScreenState extends State<LiveTvScreen> {
       _drawerVisible = false;
       _numberBuffer = '';
     });
-    if (previous != null) unawaited(previous.dispose());
-    unawaited(_repository.storeLastChannel(item.url));
+    unawaited(_repository.storeLastChannel(item.url).catchError(
+      (Object error) => debugPrint('Cannot save last channel: $error'),
+    ));
     _showInfo();
-    if (uri == null) {
+    if (uri == null || !uri.hasScheme ||
+        (uri.scheme != 'https' && uri.scheme != 'http')) {
       setState(() {
         _playerLoading = false;
-        _playerError = 'Invalid channel URL';
+        _playerError = 'Invalid HTTP(S) channel URL';
       });
+      _queuePlayerCleanup();
       return;
     }
-    final isHls = uri.path.toLowerCase().endsWith('.m3u8');
-    final next = VideoPlayerController.networkUrl(
-      uri,
-      formatHint: isHls ? VideoFormat.hls : null,
-      videoPlayerOptions: VideoPlayerOptions(mixWithOthers: false),
-    );
-    next.addListener(() {
-      if (!mounted || generation != _playbackGeneration) return;
-      if (next.value.hasError && _playerError == null) {
-        setState(() {
-          _playerError = next.value.errorDescription ?? 'Stream playback error.';
-          _playerLoading = false;
-        });
-      }
-    });
-    unawaited(_startPlayback(next, generation));
+    // All native player operations happen in the same queue. A rapid channel
+    // change invalidates old requests without overlapping MediaCodec instances.
+    _playbackTask = _playbackTask
+        .catchError((Object error, StackTrace trace) {
+          debugPrint('Player queue recovered: $error');
+        })
+        .then((_) => _startPlaybackSerial(uri, generation));
   }
 
-  Future<void> _startPlayback(VideoPlayerController next, int generation) async {
+  void _queuePlayerCleanup() {
+    _playbackTask = _playbackTask
+        .catchError((Object error, StackTrace trace) {
+          debugPrint('Player cleanup queue recovered: $error');
+        })
+        .then((_) => _releaseActivePlayer());
+  }
+
+  Future<void> _releaseActivePlayer() async {
+    final old = _activePlayer;
+    _activePlayer = null;
+    if (old == null) return;
     try {
-      await next.initialize();
-      if (!mounted || generation != _playbackGeneration) {
-        await next.dispose();
-        return;
-      }
+      await old.dispose();
+    } catch (error) {
+      debugPrint('Video player dispose error: $error');
+    }
+  }
+
+  Future<void> _startPlaybackSerial(Uri uri, int generation) async {
+    // Dispose a previous player BEFORE allocating a new hardware decoder.
+    await _releaseActivePlayer();
+    if (!mounted || generation != _playbackGeneration) return;
+    VideoPlayerController? next;
+    var ready = false;
+    try {
+      final isHls = uri.path.toLowerCase().endsWith('.m3u8');
+      final player = VideoPlayerController.networkUrl(
+        uri,
+        formatHint: isHls ? VideoFormat.hls : null,
+        videoPlayerOptions: VideoPlayerOptions(mixWithOthers: false),
+      );
+      next = player;
+      _activePlayer = player;
+      player.addListener(() {
+        if (!mounted || generation != _playbackGeneration) return;
+        if (player.value.hasError && _playerError == null) {
+          setState(() {
+            _playerError = player.value.errorDescription ?? 'Stream playback error.';
+            _playerLoading = false;
+          });
+        }
+      });
+      await player.initialize().timeout(const Duration(seconds: 20));
+      if (!mounted || generation != _playbackGeneration) return;
       setState(() {
         _controller = next;
         _playerLoading = false;
       });
-      await next.play();
-    } catch (error) {
+      await player.play();
+      ready = true;
+    } catch (error, trace) {
+      debugPrint('TV playback error: $error\n$trace');
       if (mounted && generation == _playbackGeneration) {
         setState(() {
-          _playerError = 'Playback failed. Check the stream URL/network.\n$error';
+          _playerError = 'Playback failed. Check the stream URL/TV codec.\n$error';
           _playerLoading = false;
           _controller = null;
         });
       }
-      await next.dispose();
+    } finally {
+      if (!ready && next != null) {
+        if (identical(_activePlayer, next)) _activePlayer = null;
+        try {
+          await next.dispose();
+        } catch (error) {
+          debugPrint('Failed to release unusable TV player: $error');
+        }
+      }
     }
   }
 
@@ -476,8 +563,7 @@ class _LiveTvScreenState extends State<LiveTvScreen> {
     _numberTimer?.cancel();
     _playbackGeneration++;
     _remote.setMethodCallHandler(null);
-    final controller = _controller;
-    if (controller != null) unawaited(controller.dispose());
+    _queuePlayerCleanup();
     _focus.dispose();
     _listScroll.dispose();
     super.dispose();
@@ -615,6 +701,25 @@ class _LiveTvScreenState extends State<LiveTvScreen> {
       fit: StackFit.expand,
       children: <Widget>[
         const ColoredBox(color: Colors.black),
+        if (_currentIndex < 0 && !_playerLoading)
+          const Center(
+            child: Padding(
+              padding: EdgeInsets.only(left: 410),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  Icon(Icons.live_tv_rounded, size: 66, color: Color(0xFFAFA0FF)),
+                  SizedBox(height: 16),
+                  Text('LIVE TV REMOTE',
+                      style: TextStyle(fontSize: 30, fontWeight: FontWeight.bold)),
+                  SizedBox(height: 10),
+                  Text('Select a channel with ↑ ↓ and press OK to watch',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 19, color: Color(0xFFB8C3D9))),
+                ],
+              ),
+            ),
+          ),
         if (video != null && video.value.isInitialized)
           Center(
             child: AspectRatio(

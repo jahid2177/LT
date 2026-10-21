@@ -1,0 +1,24 @@
+# Android TV-তে অ্যাপ খুললেই ক্র্যাশ — করণীয়
+
+এই সংস্করণে প্রথমে ৫১৩টি চ্যানেলের গাইড দেখাবে; নিজে থেকে প্রথম চ্যানেল চালাবে না। রিমোটের Up/Down দিয়ে চ্যানেল বেছে OK চাপলে ভিডিও শুরু হবে। এটি TV-র দুর্বল ভিডিও ডিকোডারের startup crash এড়ানোর পরীক্ষামূলক ব্যবস্থা।
+
+GitHub Actions > Android TV APK > Run workflow চালিয়ে দুটি Artifact পাবেন:
+
+- `Live-TV-Remote-AndroidTV-arm64` — স্বাভাবিক Release APK
+- `Live-TV-Remote-AndroidTV-Diagnostic-debug` — সমস্যা পরীক্ষার Debug APK (পৃথক অ্যাপ হিসেবে ইনস্টল হবে)।
+
+Release খোলামাত্র ক্র্যাশ করলে Debug APK চালিয়ে দেখুন। দুটিই ক্র্যাশ করলে TV-এর crash log দরকার।
+
+Windows PC-তে ADB কানেক্ট করে PowerShell-এ নিচের কমান্ড দিন:
+
+```powershell
+adb devices
+adb logcat -c
+adb shell am force-stop com.example.live_tv_remote
+adb shell monkey -p com.example.live_tv_remote -c android.intent.category.LAUNCHER 1
+adb logcat -d -v time > live_tv_crash.txt
+```
+
+`live_tv_crash.txt` আপলোড করলে প্রকৃত stack trace দিয়ে সমস্যা শনাক্ত করা যাবে।
+
+**সতর্কতা:** এখানে Flutter/Android SDK নেই; APK বিল্ড ও TV-তে চালিয়ে পরীক্ষা করা হয়নি।

@@ -1,3 +1,5 @@
+> **TV startup-crash diagnostic build (21 Oct 2026):** The app initially shows the channel guide instead of starting an unverified HLS stream immediately. Press **OK** to watch. GitHub Actions also creates a separate debug APK for diagnosis. For instructions see [`TV_CRASH_CHECK_BN.md`](TV_CRASH_CHECK_BN.md) and [`TV_CRASH_DIAGNOSTICS_BN.md`](TV_CRASH_DIAGNOSTICS_BN.md). This mitigates a possible cause; an actual Android TV crash log is needed to establish the root cause.
+
 # Live TV Remote — Flutter + Android TV
 
 Android TV / Google TV-এর জন্য **remote-first IPTV Live TV app**, written in Flutter (Dart) + a small Kotlin Android remote-key bridge.

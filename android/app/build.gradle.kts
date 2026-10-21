@@ -24,6 +24,10 @@ android {
         versionName = flutter.versionName
     }
     buildTypes {
+        debug {
+            // Diagnostic build can coexist with the normal release installation.
+            applicationIdSuffix = ".diagnostic"
+        }
         release {
             // Development signing for sideload/CI only, not Play Store publishing.
             signingConfig = signingConfigs.getByName("debug")
