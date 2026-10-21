@@ -78,3 +78,14 @@ GitHub run `logs_107174983477.zip` এ ১১টি unit test পাস কর�
 - Log-এ দেখা ৭টি Dart lint info সংশোধন করা হয়েছে।
 
 **নোট:** এখানে Flutter/Android SDK না থাকায় নতুন APK বিল্ড করে যাচাই করা যায়নি। GitHub Actions workflow চালিয়ে চূড়ান্ত যাচাই করুন।
+
+## ২১ অক্টোবর ২০২৬: R8 Missing Class Fix (নতুন বিল্ড লগ)
+
+`logs_107179239559.zip` অনুযায়ী Gradle সংস্করণের সমস্যা আর নেই। ১১টি test পাস, `flutter analyze`-এ কোনো issue নেই; কিন্তু Release APK R8 Minify ধাপে `androidx.window.extensions` এবং `androidx.window.sidecar`-এর ঐচ্ছিক OEM ক্লাস না পাওয়ায় ব্যর্থ।
+
+- `android/app/proguard-rules.pro`-এ শুধু এই দুই ঐচ্ছিক package-এর `-dontwarn` নিয়ম যুক্ত হয়েছে।
+- `android/app/build.gradle.kts`-এর `release` অংশ থেকে নিয়মটি লোড হবে।
+- GitHub Actions-এ নিয়মের উপস্থিতি যাচাই এবং ভবিষ্যতে বিল্ড ব্যর্থ হলে `missing_rules.txt` artifact হিসেবে রাখার ব্যবস্থা যুক্ত হয়েছে।
+- অ্যাপের চ্যানেল তালিকা ও প্লেয়ার অপরিবর্তিত।
+
+সংশোধিত ফাইল GitHub-এ আপলোড করে **Actions → Android TV APK → Run workflow** চালান। এটি এখনো এখানে APK build করে পরীক্ষা করা হয়নি। বিস্তারিত `BUILD_FIX_R8_2026-10-21.md`।

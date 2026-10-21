@@ -27,6 +27,12 @@ android {
         release {
             // Development signing for sideload/CI only, not Play Store publishing.
             signingConfig = signingConfigs.getByName("debug")
+            // R8 is active in Flutter release builds. The rules below tell it that
+            // AndroidX WindowManager's OEM-provided optional APIs may be absent.
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
         }
     }
 }

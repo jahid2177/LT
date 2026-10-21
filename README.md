@@ -152,3 +152,9 @@ Android's `KEYCODE_VOLUME_UP` / `KEYCODE_VOLUME_DOWN` are **left unconsumed**; `
 - This ZIP has not been compiled/tested against the Android SDK inside the creation environment (Flutter SDK unavailable there). The GitHub Action is configured to run `flutter analyze`, `flutter test`, and `flutter build apk` so actual compatibility is verified on a runner. Check CI logs if toolchain APIs or plugin requirements change.
 - Supported phones can sideload this build too, but the screen is locked to **landscape** and optimized for television remotes.
 - For future real DVB tuner integration, implement Android **TV Input Framework** or an OEM-specific tuner bridge; a regular Flutter IPTV player cannot access private tuner middleware by itself.
+
+## 21 Oct 2026 — Android R8 missing optional WindowManager classes (build fix)
+
+The next GitHub Actions log (`logs_107179239559.zip`) confirms Gradle toolchain verification, clean Dart analysis, and **11 passing tests**, but the release build failed during `:app:minifyReleaseWithR8` because OEM-provided `androidx.window.extensions` and `androidx.window.sidecar` classes were missing. Added **scoped** `-dontwarn` rules in `android/app/proguard-rules.pro` and linked them in the release Gradle config. Full details: [BUILD_FIX_R8_2026-10-21.md](BUILD_FIX_R8_2026-10-21.md).
+
+No blanket `-ignorewarnings` or R8 disablement is used. The 513-channel JSON snapshot has not changed. The follow-up release build still needs validation in GitHub Actions.
