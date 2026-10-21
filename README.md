@@ -1,3 +1,17 @@
+## GitHub Live Channel Sync (primary source)
+
+**Primary online source:**
+`https://raw.githubusercontent.com/faria2177/live-tv-channels/refs/heads/main/channels.json`
+
+- At EVERY app start, this URL is selected as the main source, including for users who previously imported local/M3U playlists.
+- A previously validated, saved GitHub JSON is shown immediately while the fresh version downloads. The supplied 513-channel `assets/channels.json` is an **offline-only last resort**, not the authoritative list.
+- While the app remains open, it checks GitHub every **2 minutes**; returning from the background also triggers a check (minimum 30s between checks). A manual Refresh control is available. This is **polling, not instant push**; GitHub/CDN caching or device connectivity can delay changes.
+- Conditional HTTP (`ETag` / `If-None-Match`) and `Cache-Control: no-cache` minimize unnecessary downloads when supported by GitHub.
+- If a channel keeps the same EPG ID or (group, name, duplicate position), a changed stream URL is treated as **the same channel**; if currently playing, the old player is disposed and the new URL is started. Favorites and last-channel selection use stable channel IDs rather than URL.
+- A temporary custom playlist can still be selected from Settings; the primary GitHub list is restored on next startup.
+- No update to the APK is required when `channels.json` is changed. The file needs to be publicly accessible and well-formed, and each stream must be legitimately accessible to the viewer.
+- URLs with expired signed tokens, DRM, blocked origins, or unsupported codecs will not play until the remote source provides a valid URL.
+
 > **TV startup-crash diagnostic build (21 Oct 2026):** The app initially shows the channel guide instead of starting an unverified HLS stream immediately. Press **OK** to watch. GitHub Actions also creates a separate debug APK for diagnosis. For instructions see [`TV_CRASH_CHECK_BN.md`](TV_CRASH_CHECK_BN.md) and [`TV_CRASH_DIAGNOSTICS_BN.md`](TV_CRASH_DIAGNOSTICS_BN.md). This mitigates a possible cause; an actual Android TV crash log is needed to establish the root cause.
 
 # Live TV Remote — Flutter + Android TV

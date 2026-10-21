@@ -1,3 +1,7 @@
+## স্বয়ংক্রিয় GitHub চ্যানেল আপডেট
+মূল সোর্স: https://raw.githubusercontent.com/faria2177/live-tv-channels/refs/heads/main/channels.json
+প্রতিবার অ্যাপ চালু হলে এবং চালু থাকা অবস্থায় প্রতি ২ মিনিট পর URL যাচাই করবে। TV অ্যাপ ব্যাকগ্রাউন্ড থেকে ফেরার পরও চেক করবে। GitHub JSON-এর `url` বদলালে একই `group` ও `name`-এর চ্যানেলের লিংক আপডেট হবে; চালু থাকলে নতুন স্ট্রিমে পুনরায় কানেক্ট করার চেষ্টা করবে। পুরোনো cached/bundled JSON কেবল নেটওয়ার্ক সমস্যায় fallback। পরিবর্তন সঙ্গে সঙ্গে নয়, পরবর্তী সফল check-এ দেখা যাবে।
+
 # Live TV Remote — বাংলায় বিল্ড ও ব্যবহার
 
 ## GitHub থেকে APK তৈরি

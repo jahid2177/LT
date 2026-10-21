@@ -10,6 +10,13 @@ import '../models/channel.dart';
 import 'm3u_parser.dart';
 import 'json_channel_parser.dart';
 
+class PlaylistFetchResult {
+  const PlaylistFetchResult({required this.text, this.etag, this.notModified = false});
+  final String? text;
+  final String? etag;
+  final bool notModified;
+}
+
 class PlaylistRepository {
   PlaylistRepository([this._parser = const M3uParser()]);
 
@@ -27,6 +34,9 @@ class PlaylistRepository {
   static const _playlistKey = 'playlist_m3u_v1';
   static const _playlistUrlKey = 'playlist_url_v1';
   static const _channelKey = 'last_channel_url_v1';
+  static const _channelIdKey = 'last_channel_identity_v2';
+  static const _etagKey = 'github_channels_etag_v2';
+  static const _favoriteIdsKey = 'favorites_channel_identity_v2';
   static const _favoritesKey = 'favorites_v1';
   static const _maxPlaylistBytes = 5 * 1024 * 1024;
 
@@ -45,6 +55,41 @@ class PlaylistRepository {
     return prefs.getString(_channelKey);
   }
 
+  Future<String?> loadLastChannelId() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_channelIdKey);
+  }
+
+  Future<String?> loadGithubEtag() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_etagKey);
+  }
+
+  Future<void> storeGithubEtag(String? etag) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (etag == null || etag.isEmpty) {
+      await prefs.remove(_etagKey);
+    } else {
+      await prefs.setString(_etagKey, etag);
+    }
+  }
+
+  Future<Set<String>> loadFavoriteIds() async {
+    final prefs = await SharedPreferences.getInstance();
+    return (prefs.getStringList(_favoriteIdsKey) ?? <String>[]).toSet();
+  }
+
+  Future<void> storeFavoriteIds(Set<String> ids) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(_favoriteIdsKey, ids.toList());
+  }
+
+  Future<void> storeLastChannelId(String identity) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_channelIdKey, identity);
+  }
+
+  /// Kept for one-time migration from URL-based favorites in older builds.
   Future<Set<String>> loadFavorites() async {
     final prefs = await SharedPreferences.getInstance();
     return (prefs.getStringList(_favoritesKey) ?? <String>[]).toSet();
@@ -79,7 +124,16 @@ class PlaylistRepository {
     return _parser.parse(source, baseUri: baseUri);
   }
 
+  /// Legacy/manual import API: always requires a fresh response body.
   Future<String> fetchPlaylist(String input) async {
+    final response = await fetchPlaylistWithMetadata(input);
+    return response.text!;
+  }
+
+  /// Conditional GET avoids downloading unchanged GitHub JSON on each poll.
+  /// Parsing/validating happens in the caller before the new text is cached.
+  Future<PlaylistFetchResult> fetchPlaylistWithMetadata(String input,
+      {String? etag}) async {
     final uri = Uri.tryParse(input.trim());
     if (uri == null ||
         (uri.scheme != 'https' && uri.scheme != 'http') ||
@@ -90,7 +144,15 @@ class PlaylistRepository {
     try {
       final request = await client.getUrl(uri).timeout(const Duration(seconds: 15));
       request.headers.set(HttpHeaders.acceptHeader, 'application/json, audio/x-mpegurl, */*');
+      request.headers.set(HttpHeaders.cacheControlHeader, 'no-cache');
+      if (etag != null && etag.isNotEmpty) {
+        request.headers.set(HttpHeaders.ifNoneMatchHeader, etag);
+      }
       final response = await request.close().timeout(const Duration(seconds: 20));
+      if (response.statusCode == HttpStatus.notModified && etag != null) {
+        await response.drain<void>();
+        return PlaylistFetchResult(text: null, etag: etag, notModified: true);
+      }
       if (response.statusCode != HttpStatus.ok) {
         throw HttpException('Server returned HTTP ${response.statusCode}.');
       }
@@ -101,7 +163,10 @@ class PlaylistRepository {
           throw const FormatException('Channel list exceeds 5 MB safety limit.');
         }
       }
-      return utf8.decode(bytes.takeBytes(), allowMalformed: true);
+      return PlaylistFetchResult(
+        text: utf8.decode(bytes.takeBytes(), allowMalformed: true),
+        etag: response.headers.value(HttpHeaders.etagHeader),
+      );
     } finally {
       client.close(force: true);
     }

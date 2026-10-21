@@ -6,6 +6,7 @@ import 'package:video_player/video_player.dart';
 
 import '../models/channel.dart';
 import '../services/m3u_parser.dart';
+import '../services/channel_identity.dart';
 import '../services/playlist_repository.dart';
 import 'playlist_dialog.dart';
 
@@ -16,7 +17,7 @@ class LiveTvScreen extends StatefulWidget {
   State<LiveTvScreen> createState() => _LiveTvScreenState();
 }
 
-class _LiveTvScreenState extends State<LiveTvScreen> {
+class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver {
   static const _remote = MethodChannel('livetv_remote/keys');
 
   final _repository = PlaylistRepository();
@@ -41,6 +42,14 @@ class _LiveTvScreenState extends State<LiveTvScreen> {
   bool _dialogOpen = false;
   String _playlistUrl = '';
   String? _preferredUrl;
+  String? _preferredId;
+  String? _githubEtag;
+  bool _hasValidatedOnlineCache = false;
+  bool _foreground = true;
+  bool _onlineConfirmed = false;
+  DateTime? _lastSyncCheck;
+  Timer? _refreshTimer;
+  static const _refreshInterval = Duration(minutes: 2);
   String? _sourceError;
   String? _cachedPlaylistText;
   bool _refreshing = false;
@@ -52,7 +61,7 @@ class _LiveTvScreenState extends State<LiveTvScreen> {
 
   List<int> get _visibleIndices => <int>[
         for (var i = 0; i < _channels.length; i++)
-          if (!_favoritesOnly || _favorites.contains(_channels[i].url)) i,
+          if (!_favoritesOnly || _favorites.contains(stableChannelKey(_channels, i))) i,
       ];
 
   TvChannel? get _currentChannel =>
@@ -64,7 +73,42 @@ class _LiveTvScreenState extends State<LiveTvScreen> {
   void initState() {
     super.initState();
     _remote.setMethodCallHandler(_handleNativeRemote);
+    WidgetsBinding.instance.addObserver(this);
+    _refreshTimer = Timer.periodic(_refreshInterval, (_) {
+      if (_foreground && !_dialogOpen &&
+          _playlistUrl == PlaylistRepository.defaultChannelsUrl) {
+        unawaited(_refreshChannels(_playlistUrl));
+      }
+    });
     unawaited(_restore());
+  }
+
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _foreground = state == AppLifecycleState.resumed;
+    if (_foreground && _playlistUrl == PlaylistRepository.defaultChannelsUrl &&
+        (_lastSyncCheck == null ||
+         DateTime.now().difference(_lastSyncCheck!) > const Duration(seconds: 30))) {
+      unawaited(_refreshChannels(_playlistUrl));
+    }
+  }
+
+  void _restoreFavoriteIdentities(Set<String> oldUrls) {
+    if (oldUrls.isEmpty) return;
+    var changed = false;
+    for (var i = 0; i < _channels.length; i++) {
+      if (oldUrls.contains(_channels[i].url)) {
+        changed = _favorites.add(stableChannelKey(_channels, i)) || changed;
+      }
+    }
+    if (changed) unawaited(_repository.storeFavoriteIds(_favorites));
+  }
+
+  int _savedIndex(List<TvChannel> channels) {
+    var index = channelIndexForKey(channels, _preferredId);
+    if (index < 0) index = channels.indexWhere((c) => c.url == _preferredUrl);
+    return index < 0 ? 0 : index;
   }
 
   Future<dynamic> _handleNativeRemote(MethodCall call) async {
@@ -104,72 +148,68 @@ class _LiveTvScreenState extends State<LiveTvScreen> {
       final cached = await _repository.loadText();
       final storedUrl = await _repository.loadUrl();
       final last = await _repository.loadLastChannelUrl();
-      final favorites = await _repository.loadFavorites();
+      final lastId = await _repository.loadLastChannelId();
+      final oldFavorites = await _repository.loadFavorites();
+      final favorites = await _repository.loadFavoriteIds();
       if (!mounted) return;
-      final hasCache = cached != null && cached.trim().isNotEmpty;
-      // Keep existing users' locally imported M3U lists intact; new installs
-      // use the supplied GitHub JSON URL as their default source.
-      final sourceUrl = storedUrl?.trim().isNotEmpty == true
-          ? storedUrl!.trim()
-          : (hasCache ? '' : PlaylistRepository.defaultChannelsUrl);
+
+      // GitHub is ALWAYS the primary startup source, even after an older
+      // version of the app saved an imported/temporary M3U URL.
+      const sourceUrl = PlaylistRepository.defaultChannelsUrl;
       _playlistUrl = sourceUrl;
       _preferredUrl = last;
+      _preferredId = lastId;
       _favorites = favorites;
-
-      if (cached != null && cached.trim().isNotEmpty) {
+      final compatibleCache = storedUrl == sourceUrl &&
+          cached != null && cached.trim().isNotEmpty;
+      if (compatibleCache) {
         try {
-          final channels = _repository.parse(
-            cached,
-            baseUri: sourceUrl.isEmpty ? null : Uri.tryParse(sourceUrl),
-          );
+          final channels = _repository.parse(cached, baseUri: Uri.parse(sourceUrl));
+          _githubEtag = await _repository.loadGithubEtag();
+          _hasValidatedOnlineCache = true;
+          if (!mounted) return;
           _cachedPlaylistText = cached;
           setState(() {
             _channels = channels;
             _loading = false;
           });
-          final index = channels.indexWhere((channel) => channel.url == last);
-          _showStartupGuide(index < 0 ? 0 : index);
+          _restoreFavoriteIdentities(oldFavorites);
+          _showStartupGuide(_savedIndex(channels));
         } catch (error) {
-          setState(() => _sourceError = 'Saved channel list is invalid: $error');
+          debugPrint('Stored GitHub JSON was invalid: $error');
         }
       }
-      // On a first installation there is no local cache yet. Show the actual
-      // 513-entry user-supplied JSON snapshot immediately and refresh online
-      // without making the TV wait for GitHub or a network connection.
-      // This fallback also recovers an invalid/obsolete cached playlist.
+      // Offline fallback is a snapshot only, never the authoritative source.
       if (_channels.isEmpty) {
         try {
-          final bundledText = await _repository.loadBundledChannels();
-          final bundledChannels = _repository.parse(bundledText);
+          final text = await _repository.loadBundledChannels();
+          final channels = _repository.parse(text);
           if (!mounted) return;
-          _cachedPlaylistText = bundledText;
+          _cachedPlaylistText = text;
           setState(() {
-            _channels = bundledChannels;
+            _channels = channels;
             _loading = false;
           });
-          final index = bundledChannels.indexWhere((e) => e.url == last);
-          _showStartupGuide(index < 0 ? 0 : index);
+          _restoreFavoriteIdentities(oldFavorites);
+          _showStartupGuide(_savedIndex(channels));
         } catch (error) {
           if (!mounted) return;
           setState(() {
             _loading = false;
-            _sourceError = 'Bundled channel list cannot be opened: $error';
+            _sourceError = 'Offline fallback cannot be opened: $error';
           });
         }
       }
-      if (sourceUrl.isNotEmpty) {
-        // Refresh from GitHub on launch, keeping the bundled/saved channels
-        // available if the network or remote JSON is temporarily unavailable.
-        unawaited(_refreshChannels(sourceUrl));
-      } else if (mounted) {
-        setState(() => _loading = false);
-      }
+      // Always check GitHub on launch, including when saved data exists.
+      unawaited(_refreshChannels(sourceUrl));
     } catch (error) {
       if (!mounted) return;
       setState(() {
         _loading = false;
         _sourceError = 'Unable to load saved channels: $error';
       });
+      // A failed preference read must not prevent a fresh GitHub attempt.
+      unawaited(_refreshChannels(PlaylistRepository.defaultChannelsUrl));
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _focus.requestFocus();
@@ -177,29 +217,51 @@ class _LiveTvScreenState extends State<LiveTvScreen> {
   }
 
   Future<void> _refreshChannels(String url) async {
-    if (_refreshing || url.isEmpty) return;
+    if (_refreshing || url.isEmpty || !mounted) return;
     final epoch = _selectionEpoch;
+    final primary = url == PlaylistRepository.defaultChannelsUrl;
+    _lastSyncCheck = DateTime.now();
     setState(() {
       _refreshing = true;
       _sourceError = null;
     });
     try {
-      final text = await _repository.fetchPlaylist(url);
+      final result = await _repository.fetchPlaylistWithMetadata(
+        url, etag: primary && _cachedPlaylistText != null ? _githubEtag : null,
+      );
+      if (!mounted || epoch != _selectionEpoch || url != _playlistUrl) return;
+      if (result.notModified) {
+        setState(() {
+          _onlineConfirmed = true;
+          _loading = false;
+        });
+        return;
+      }
+      final text = result.text!;
       final channels = _repository.parse(text, baseUri: Uri.parse(url));
       if (!mounted || epoch != _selectionEpoch || url != _playlistUrl) return;
-      if (_cachedPlaylistText == text && _channels.isNotEmpty) {
-        setState(() => _loading = false);
-      } else {
+      if (_cachedPlaylistText != text || _channels.isEmpty ||
+          (primary && !_hasValidatedOnlineCache)) {
         await _setPlaylist(
           PlaylistSelection(text: text, url: url, channels: channels),
           fromRefresh: true,
         );
       }
+      if (!mounted || epoch != _selectionEpoch || url != _playlistUrl) return;
+      if (primary) {
+        _hasValidatedOnlineCache = true;
+        _githubEtag = result.etag;
+        await _repository.storeGithubEtag(result.etag);
+      }
+      if (mounted) setState(() {
+        _onlineConfirmed = true;
+        _loading = false;
+      });
     } catch (error) {
       if (mounted && epoch == _selectionEpoch && url == _playlistUrl) {
         setState(() {
           _loading = false;
-          _sourceError = 'Unable to update channels from URL: $error';
+          _sourceError = 'GitHub update failed: $error';
         });
       }
     } finally {
@@ -235,48 +297,83 @@ class _LiveTvScreenState extends State<LiveTvScreen> {
   Future<void> _setPlaylist(PlaylistSelection selection,
       {bool fromRefresh = false}) async {
     if (!fromRefresh) _selectionEpoch++;
-    final previouslyPlaying = _currentIndex >= 0;
-    final selectedUrl = _currentChannel?.url ?? _preferredUrl;
-    final matchingIndex = selection.channels.indexWhere((e) => e.url == selectedUrl);
+    if (!mounted) return;
+    final oldChannels = _channels;
+    final oldIndex = _currentIndex;
+    final oldUrl = _currentChannel?.url;
+    final activeKey = oldIndex >= 0 && oldIndex < oldChannels.length
+        ? stableChannelKey(oldChannels, oldIndex) : _preferredId;
+    final matchingIndex = channelIndexForKey(selection.channels, activeKey);
+    final oldVisible = _visibleIndices;
+    final oldHighlightKey = _drawerVisible && _highlightIndex < oldVisible.length
+        ? stableChannelKey(oldChannels, oldVisible[_highlightIndex]) : null;
+    final oldHighlightUrl = _drawerVisible && _highlightIndex < oldVisible.length
+        ? oldChannels[oldVisible[_highlightIndex]].url : null;
+    final playing = oldIndex >= 0;
+    final streamChanged = playing && matchingIndex >= 0 &&
+        selection.channels[matchingIndex].url != oldUrl;
+
+    // If there was no stable ID in an older version, URL provides one-time
+    // migration. From then on, channel identity is independent of the URL.
+    final highlightIndex = channelIndexForKey(selection.channels, oldHighlightKey);
+    final migratedHighlight = highlightIndex >= 0 ? highlightIndex :
+        selection.channels.indexWhere((e) => e.url == oldHighlightUrl);
+    final matchedKey = matchingIndex >= 0
+        ? stableChannelKey(selection.channels, matchingIndex) : null;
+    final newVisible = <int>[
+      for (var i = 0; i < selection.channels.length; i++)
+        if (!_favoritesOnly ||
+            _favorites.contains(stableChannelKey(selection.channels, i))) i,
+    ];
+    final nextHighlight = newVisible.indexOf(migratedHighlight);
+
     setState(() {
       _channels = selection.channels;
       _cachedPlaylistText = selection.text;
       _playlistUrl = selection.url ?? '';
-      _favoritesOnly = false;
       _playerError = null;
       _sourceError = null;
       _loading = false;
-      if (fromRefresh && previouslyPlaying && matchingIndex >= 0) {
-        // The selected stream is unchanged: do NOT recreate its ExoPlayer.
-        _currentIndex = matchingIndex;
-      } else if (fromRefresh && !previouslyPlaying) {
-        _currentIndex = -1;
-        _highlightIndex = matchingIndex < 0 ? 0 : matchingIndex;
-        _drawerVisible = true;
-      } else {
-        _drawerVisible = false;
-      }
-    });
-    await _repository.storePlaylist(selection.text, url: selection.url);
-    if (!mounted) return;
-    if (fromRefresh) {
-      if (previouslyPlaying && matchingIndex < 0) {
-        // Source removed the currently playing station; let the viewer choose.
-        _playbackGeneration++;
-        setState(() {
-          _currentIndex = -1;
-          _highlightIndex = 0;
+      if (fromRefresh) {
+        _currentIndex = playing && matchingIndex >= 0 ? matchingIndex : -1;
+        if (playing && matchingIndex < 0) {
           _drawerVisible = true;
           _controller = null;
           _playerLoading = false;
-        });
+        }
+        // Preserve channel-guide focus when names or URLs are updated.
+        if (_drawerVisible && nextHighlight >= 0) {
+          _highlightIndex = nextHighlight;
+        } else if (_drawerVisible && _channels.isNotEmpty) {
+          _highlightIndex = 0;
+        }
+      } else {
+        _favoritesOnly = false;
+        _drawerVisible = false;
+      }
+    });
+    if (matchedKey != null) _preferredId = matchedKey;
+    if (!fromRefresh) {
+      _githubEtag = null;
+      _hasValidatedOnlineCache = false;
+      _onlineConfirmed = false;
+    }
+
+    if (fromRefresh) {
+      if (playing && matchingIndex < 0) {
+        _playbackGeneration++;
         _queuePlayerCleanup();
+      } else if (streamChanged) {
+        // New URL for SAME logical channel: retune serially; do not keep
+        // playing an expired token, and never allocate two decoders together.
+        _tune(matchingIndex);
       }
       _ensureHighlightedVisible();
-      return;
+    } else if (selection.channels.isNotEmpty) {
+      final first = matchingIndex < 0 ? 0 : matchingIndex;
+      _tune(first);
     }
-    // A user explicitly imported/selected a different playlist: play it.
-    _tune(matchingIndex == -1 ? 0 : matchingIndex);
+    await _repository.storePlaylist(selection.text, url: selection.url);
   }
 
   Future<void> _openSettings() async {
@@ -302,6 +399,15 @@ class _LiveTvScreenState extends State<LiveTvScreen> {
     if (mounted) _focus.requestFocus();
   }
 
+  Future<void> _saveLastChannel(String url, String identity) async {
+    try {
+      await _repository.storeLastChannelId(identity);
+      await _repository.storeLastChannel(url);
+    } catch (error) {
+      debugPrint('Cannot remember channel: $error');
+    }
+  }
+
   void _tune(int target) {
     if (!mounted || target < 0 || target >= _channels.length) return;
     final generation = ++_playbackGeneration;
@@ -316,9 +422,10 @@ class _LiveTvScreenState extends State<LiveTvScreen> {
       _drawerVisible = false;
       _numberBuffer = '';
     });
-    unawaited(_repository.storeLastChannel(item.url).catchError(
-      (Object error) => debugPrint('Cannot save last channel: $error'),
-    ));
+    final identity = stableChannelKey(_channels, target);
+    _preferredId = identity;
+    _preferredUrl = item.url;
+    unawaited(_saveLastChannel(item.url, identity));
     _showInfo();
     if (uri == null || !uri.hasScheme ||
         (uri.scheme != 'https' && uri.scheme != 'http')) {
@@ -454,9 +561,10 @@ class _LiveTvScreenState extends State<LiveTvScreen> {
     final current = _currentChannel;
     if (current == null) return;
     final next = Set<String>.from(_favorites);
-    if (!next.add(current.url)) next.remove(current.url);
+    final key = stableChannelKey(_channels, _currentIndex);
+    if (!next.add(key)) next.remove(key);
     setState(() => _favorites = next);
-    unawaited(_repository.storeFavorites(next));
+    unawaited(_repository.storeFavoriteIds(next));
     _showInfo();
   }
 
@@ -559,6 +667,8 @@ class _LiveTvScreenState extends State<LiveTvScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _refreshTimer?.cancel();
     _infoTimer?.cancel();
     _numberTimer?.cancel();
     _playbackGeneration++;
@@ -822,7 +932,7 @@ class _LiveTvScreenState extends State<LiveTvScreen> {
             IconButton.filledTonal(
               tooltip: 'Favorite (F)',
               onPressed: _toggleFavorites,
-              icon: Icon(_favorites.contains(channel.url)
+              icon: Icon(_favorites.contains(stableChannelKey(_channels, _currentIndex))
                   ? Icons.star : Icons.star_border),
             ),
             const SizedBox(width: 10),
@@ -890,9 +1000,12 @@ class _LiveTvScreenState extends State<LiveTvScreen> {
             child: Align(
               alignment: Alignment.centerLeft,
               child: Text(
-                _sourceError != null ? 'Update failed • showing saved channels'
-                  : _refreshing ? 'Checking for online updates…'
-                  : _favoritesOnly ? '${indices.length} favorites' : '${indices.length} channels',
+                _sourceError != null ? 'Offline / GitHub unavailable • saved list shown'
+                  : _refreshing ? 'Checking GitHub for channel updates…'
+                  : _favoritesOnly ? '${indices.length} favorites'
+                  : _playlistUrl == PlaylistRepository.defaultChannelsUrl
+                    ? '${indices.length} channels • ${_onlineConfirmed ? 'GitHub synced' : 'saved copy • syncing'} • auto-refresh 2 min'
+                    : '${indices.length} channels • custom playlist',
                 style: const TextStyle(color: Color(0xFF9DAEC9)),
               ),
             ),
@@ -956,7 +1069,7 @@ class _LiveTvScreenState extends State<LiveTvScreen> {
                                 ],
                               ),
                             ),
-                            if (_favorites.contains(channel.url))
+                            if (_favorites.contains(stableChannelKey(_channels, _currentIndex)))
                               const Icon(Icons.star, color: Color(0xFFFFCC63), size: 19),
                             if (playing) ...<Widget>[
                               const SizedBox(width: 5),
