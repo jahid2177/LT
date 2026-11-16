@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
 
 import '../models/channel.dart';
+import '../services/app_updater.dart';
 import '../services/m3u_parser.dart';
 import '../services/channel_identity.dart';
 import '../services/playlist_repository.dart';
@@ -59,9 +60,12 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
 
   GuideSection _guideSection = GuideSection.channels;
   int _toolbarIndex = 0;
-  static const _guideActionCount = 5;
+  static const _guideActionCount = 6;
 
   List<TvChannel> _channels = <TvChannel>[];
+  // Always rebuilt together with _channels: _channelKeys[i] is the stable
+  // identity of _channels[i]. Avoids O(n^2) key work on every key press.
+  List<String> _channelKeys = <String>[];
   Set<String> _favorites = <String>{};
   VideoPlayerController? _controller;
   VideoPlayerController? _activePlayer;
@@ -97,13 +101,23 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
   Timer? _infoTimer;
   Timer? _numberTimer;
 
+  // In-app update from this project's GitHub Releases.
+  final _appUpdater = AppUpdater();
+  static const _updateCheckInterval = Duration(hours: 6);
+  Timer? _firstUpdateCheckTimer;
+  Timer? _updateCheckTimer;
+  Timer? _updateStatusTimer;
+  String? _updateStatus;
+  int? _declinedUpdateCode;
+  bool _updateBusy = false;
+
   List<int> get _visibleIndices => searchChannelIndices(
         _channels,
         query: _searchQuery,
         allowedIndices: _favoritesOnly
             ? <int>{
                 for (var i = 0; i < _channels.length; i++)
-                  if (_favorites.contains(stableChannelKey(_channels, i))) i,
+                  if (_favorites.contains(_channelKeys[i])) i,
               }
             : null,
       );
@@ -125,7 +139,98 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
         unawaited(_refreshChannels(_playlistUrl));
       }
     });
+    _appUpdater.setEventHandler(_onUpdateEvent);
+    // Let the channel guide appear first; then look for a newer release.
+    _firstUpdateCheckTimer = Timer(const Duration(seconds: 12),
+        () => unawaited(_checkForAppUpdate()));
+    _updateCheckTimer = Timer.periodic(_updateCheckInterval,
+        (_) => unawaited(_checkForAppUpdate()));
     unawaited(_restore());
+  }
+
+  void _setUpdateStatus(String? text, {Duration? clearAfter}) {
+    _updateStatusTimer?.cancel();
+    if (!mounted) return;
+    setState(() => _updateStatus = text);
+    if (text != null && clearAfter != null) {
+      _updateStatusTimer = Timer(clearAfter, () {
+        if (mounted) setState(() => _updateStatus = null);
+      });
+    }
+  }
+
+  void _onUpdateEvent(String type, int? percent, String? message) {
+    if (!mounted) return;
+    switch (type) {
+      case 'progress':
+        _setUpdateStatus('Downloading app update… ${percent ?? 0}%');
+        break;
+      case 'confirm':
+        _setUpdateStatus('Update downloaded. Confirm the installation on screen.',
+            clearAfter: const Duration(seconds: 30));
+        break;
+      case 'success':
+        _updateBusy = false;
+        _setUpdateStatus('App updated.', clearAfter: const Duration(seconds: 8));
+        break;
+      default:
+        _updateBusy = false;
+        _setUpdateStatus('App update failed: ${message ?? 'unknown error'}',
+            clearAfter: const Duration(seconds: 15));
+        break;
+    }
+  }
+
+  /// Asks before installing: the viewer may be in the middle of a programme.
+  /// "Later" silences this version until the app is started again.
+  Future<void> _checkForAppUpdate() async {
+    if (_updateBusy || _dialogOpen || !mounted) return;
+    try {
+      final update = await _appUpdater.check();
+      if (!mounted) return;
+      if (update == null || _updateBusy || _dialogOpen ||
+          update.versionCode == _declinedUpdateCode) {
+        return;
+      }
+      setState(() => _dialogOpen = true);
+      final accepted = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('App update available'),
+          content: Text('Live TV Remote ${update.versionName} is available. '
+              'Download and install it now? Android will ask you to confirm.'),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Later'),
+            ),
+            FilledButton(
+              autofocus: true,
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('Update now'),
+            ),
+          ],
+        ),
+      );
+      if (!mounted) return;
+      setState(() => _dialogOpen = false);
+      _focus.requestFocus();
+      if (accepted != true) {
+        _declinedUpdateCode = update.versionCode;
+        return;
+      }
+      _updateBusy = true;
+      _setUpdateStatus('Downloading app update…');
+      await _appUpdater.install(update);
+    } catch (error, stack) {
+      _updateBusy = false;
+      CrashReporter.error('App update', error, stack);
+      if (mounted && _updateStatus != null) {
+        _setUpdateStatus('App update failed: $error',
+            clearAfter: const Duration(seconds: 15));
+      }
+    }
   }
 
 
@@ -145,7 +250,7 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
     var changed = false;
     for (var i = 0; i < _channels.length; i++) {
       if (oldUrls.contains(_channels[i].url)) {
-        changed = _favorites.add(stableChannelKey(_channels, i)) || changed;
+        changed = _favorites.add(_channelKeys[i]) || changed;
       }
     }
     if (changed) unawaited(_repository.storeFavoriteIds(_favorites));
@@ -251,6 +356,7 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
       if (!mounted || _channels.isNotEmpty) return;
       setState(() {
         _channels = channels;
+        _channelKeys = stableChannelKeys(channels);
         _loading = false;
         _onlineConfirmed = false;
       });
@@ -367,7 +473,8 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
     final oldUrl = _currentChannel?.url;
     final activeKey = oldIndex >= 0 && oldIndex < oldChannels.length
         ? stableChannelKey(oldChannels, oldIndex) : _preferredId;
-    final matchingIndex = channelIndexForKey(selection.channels, activeKey);
+    final newKeys = stableChannelKeys(selection.channels);
+    final matchingIndex = activeKey == null ? -1 : newKeys.indexOf(activeKey);
     final oldVisible = _visibleIndices;
     final oldHighlightKey = _drawerVisible && _highlightIndex < oldVisible.length
         ? stableChannelKey(oldChannels, oldVisible[_highlightIndex]) : null;
@@ -379,18 +486,18 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
 
     // If there was no stable ID in an older version, URL provides one-time
     // migration. From then on, channel identity is independent of the URL.
-    final highlightIndex = channelIndexForKey(selection.channels, oldHighlightKey);
+    final highlightIndex =
+        oldHighlightKey == null ? -1 : newKeys.indexOf(oldHighlightKey);
     final migratedHighlight = highlightIndex >= 0 ? highlightIndex :
         selection.channels.indexWhere((e) => e.url == oldHighlightUrl);
-    final matchedKey = matchingIndex >= 0
-        ? stableChannelKey(selection.channels, matchingIndex) : null;
+    final matchedKey = matchingIndex >= 0 ? newKeys[matchingIndex] : null;
     final newVisible = searchChannelIndices(
       selection.channels,
       query: _searchQuery,
       allowedIndices: _favoritesOnly
           ? <int>{
               for (var i = 0; i < selection.channels.length; i++)
-                if (_favorites.contains(stableChannelKey(selection.channels, i))) i,
+                if (_favorites.contains(newKeys[i])) i,
             }
           : null,
     );
@@ -398,6 +505,7 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
 
     setState(() {
       _channels = selection.channels;
+      _channelKeys = newKeys;
       _cachedPlaylistText = selection.text;
       _playlistUrl = selection.url ?? '';
       _playerError = null;
@@ -446,10 +554,14 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
       final first = matchingIndex < 0 ? 0 : matchingIndex;
       _tune(first);
     }
-    try {
-      await _repository.storePlaylist(selection.text, url: selection.url);
-    } catch (error, stack) {
-      CrashReporter.error('Could not cache channel catalog', error, stack);
+    // Only the GitHub catalog is restored at startup. A temporary custom
+    // playlist must not overwrite that saved offline copy.
+    if (selection.url == PlaylistRepository.defaultChannelsUrl) {
+      try {
+        await _repository.storePlaylist(selection.text, url: selection.url);
+      } catch (error, stack) {
+        CrashReporter.error('Could not cache channel catalog', error, stack);
+      }
     }
   }
 
@@ -646,15 +758,37 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
     });
   }
 
-  void _toggleFavorites() {
-    final current = _currentChannel;
-    if (current == null) return;
+  void _toggleFavoriteAt(int channelIndex) {
+    if (channelIndex < 0 || channelIndex >= _channels.length) return;
     final next = Set<String>.from(_favorites);
-    final key = stableChannelKey(_channels, _currentIndex);
+    final key = _channelKeys[channelIndex];
     if (!next.add(key)) next.remove(key);
     setState(() => _favorites = next);
     unawaited(_repository.storeFavoriteIds(next));
+  }
+
+  /// Favorite / unfavorite the channel that is playing (keyboard F, touch).
+  void _toggleFavorites() {
+    if (_currentChannel == null) return;
+    _toggleFavoriteAt(_currentIndex);
     _showInfo();
+  }
+
+  /// TV remotes have no F key: the guide's heart icon toggles the channel
+  /// highlighted in the list (or the playing channel if the list is empty).
+  void _toggleHighlightedFavorite() {
+    final visible = _visibleIndices;
+    if (visible.isEmpty) {
+      if (_currentChannel != null) _toggleFavoriteAt(_currentIndex);
+      return;
+    }
+    _toggleFavoriteAt(
+        visible[_highlightIndex.clamp(0, visible.length - 1).toInt()]);
+    // In the favorites-only view the list has just become shorter.
+    final remaining = _visibleIndices.length;
+    if (_highlightIndex >= remaining) {
+      setState(() => _highlightIndex = remaining == 0 ? 0 : remaining - 1);
+    }
   }
 
   void _toggleFilter() {
@@ -745,17 +879,20 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
         _toggleFilter();
         break;
       case 1:
+        _toggleHighlightedFavorite();
+        break;
+      case 2:
         if (_playlistUrl.isNotEmpty && !_refreshing) {
           unawaited(_refreshChannels(_playlistUrl));
         }
         break;
-      case 2:
+      case 3:
         unawaited(CrashReporter.openFinder());
         break;
-      case 3:
+      case 4:
         unawaited(_openSettings());
         break;
-      case 4:
+      case 5:
         setState(() => _drawerVisible = false);
         break;
     }
@@ -763,6 +900,12 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
   }
 
   void _onSelect() {
+    // The on-screen Retry button cannot be reached with a D-pad, so OK on a
+    // failed stream retries it. LEFT / BACK / MENU still open the guide.
+    if (!_drawerVisible && _playerError != null && _currentIndex >= 0) {
+      _tune(_currentIndex);
+      return;
+    }
     if (!_drawerVisible) {
       _openDrawer();
       return;
@@ -863,6 +1006,10 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _refreshTimer?.cancel();
+    _firstUpdateCheckTimer?.cancel();
+    _updateCheckTimer?.cancel();
+    _updateStatusTimer?.cancel();
+    _appUpdater.setEventHandler(null);
     _infoTimer?.cancel();
     _numberTimer?.cancel();
     _playbackGeneration++;
@@ -895,6 +1042,24 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
               if (_infoVisible && _currentChannel != null && !_drawerVisible)
                 _buildInfoOverlay(),
               if (_drawerVisible) _buildChannelDrawer(),
+              if (_updateStatus != null)
+                Align(
+                  alignment: Alignment.bottomRight,
+                  child: Padding(
+                    padding: const EdgeInsets.all(18),
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: const Color(0xF0202540),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+                        child: Text(_updateStatus!,
+                            style: const TextStyle(fontSize: 16)),
+                      ),
+                    ),
+                  ),
+                ),
               if (_numberBuffer.isNotEmpty)
                 Align(
                   alignment: Alignment.topCenter,
@@ -1058,6 +1223,9 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
                   icon: const Icon(Icons.refresh),
                   label: const Text('Retry stream'),
                 ),
+                const SizedBox(height: 10),
+                const Text('Press OK to retry  •  ← channel guide',
+                    style: TextStyle(color: Color(0xFF91A2C4), fontSize: 13)),
               ]),
             ),
           ),
@@ -1120,7 +1288,7 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
                   Text('${channel.group}  •  ${_channels.length} channels',
                       style: const TextStyle(fontSize: 15, color: Color(0xFFC1CEE3))),
                   const SizedBox(height: 6),
-                  const Text('CH +/− change  •  OK guide  •  F favorite  •  M playlists',
+                  const Text('CH +/− change  •  OK guide  •  Favorite: guide → ♥ icon',
                       style: TextStyle(color: Color(0xFF91A2C4), fontSize: 13)),
                 ],
               ),
@@ -1128,7 +1296,7 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
             IconButton.filledTonal(
               tooltip: 'Favorite (F)',
               onPressed: _toggleFavorites,
-              icon: Icon(_favorites.contains(stableChannelKey(_channels, _currentIndex))
+              icon: Icon(_favorites.contains(_channelKeys[_currentIndex])
                   ? Icons.star : Icons.star_border),
             ),
             const SizedBox(width: 10),
@@ -1206,6 +1374,9 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
   Widget _buildChannelDrawer() {
     final indices = _visibleIndices;
     final listFocused = _guideSection == GuideSection.channels;
+    final highlightedIsFavorite = indices.isNotEmpty &&
+        _favorites.contains(_channelKeys[
+            indices[_highlightIndex.clamp(0, indices.length - 1).toInt()]]);
     return Align(
       alignment: Alignment.centerLeft,
       child: Container(
@@ -1244,25 +1415,34 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
               ),
               _guideAction(
                 index: 1,
+                icon: highlightedIsFavorite
+                    ? Icons.favorite : Icons.favorite_border,
+                label: highlightedIsFavorite
+                    ? 'Remove highlighted channel from favorites'
+                    : 'Add highlighted channel to favorites',
+                onPressed: _toggleHighlightedFavorite,
+              ),
+              _guideAction(
+                index: 2,
                 icon: Icons.refresh,
                 label: 'Refresh channels from GitHub',
                 onPressed: _playlistUrl.isEmpty || _refreshing
                     ? null : () => unawaited(_refreshChannels(_playlistUrl)),
               ),
               _guideAction(
-                index: 2,
+                index: 3,
                 icon: Icons.bug_report_outlined,
                 label: 'Crash Finder',
                 onPressed: () => unawaited(CrashReporter.openFinder()),
               ),
               _guideAction(
-                index: 3,
+                index: 4,
                 icon: Icons.settings,
                 label: 'Settings and playlists',
                 onPressed: _openSettings,
               ),
               _guideAction(
-                index: 4,
+                index: 5,
                 icon: Icons.close,
                 label: 'Close channel guide',
                 onPressed: () => setState(() => _drawerVisible = false),
@@ -1383,6 +1563,9 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
                                   channel.logo,
                                   width: 34,
                                   height: 34,
+                                  // Decode at display size (3x for dense
+                                  // TVs) instead of the full logo bitmap.
+                                  cacheWidth: 102,
                                   fit: BoxFit.contain,
                                   errorBuilder: (context, error, stackTrace) =>
                                       const Icon(Icons.tv, size: 27),
@@ -1404,7 +1587,7 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
                                   ],
                                 ),
                               ),
-                              if (_favorites.contains(stableChannelKey(_channels, channelIndex)))
+                              if (_favorites.contains(_channelKeys[channelIndex]))
                                 const Icon(Icons.star, color: Color(0xFFFFCC63), size: 19),
                               if (playing) ...<Widget>[
                                 const SizedBox(width: 5),
@@ -1421,7 +1604,7 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
           const Divider(height: 1),
           const Padding(
             padding: EdgeInsets.all(12),
-            child: Text('↑ channels → Search → toolbar • OK search/choose • ← → icons • BACK close',
+            child: Text('↑ Search → toolbar • OK choose • ← → icons • ♥ favorite highlighted • BACK close',
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 12, color: Color(0xFF97A9C8))),
           ),

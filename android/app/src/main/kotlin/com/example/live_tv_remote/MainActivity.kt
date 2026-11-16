@@ -11,6 +11,7 @@ import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
     private var remoteChannel: MethodChannel? = null
+    private var updaterChannel: MethodChannel? = null
     private var keepAwakeRequested = false
     private var activityResumed = false
 
@@ -101,6 +102,37 @@ class MainActivity : FlutterActivity() {
             flutterEngine.dartExecutor.binaryMessenger,
             "livetv_remote/keys"
         )
+        // In-app self-update from this project's GitHub Releases.
+        val updater = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "livetv_remote/updater"
+        )
+        updater.setMethodCallHandler { call, result ->
+            try {
+                when (call.method) {
+                    "getVersion" -> result.success(AppUpdater.versionInfo(this))
+                    "installUpdate" -> {
+                        val url = call.argument<String>("url") ?: ""
+                        if (AppUpdater.start(this, url)) {
+                            result.success(null)
+                        } else {
+                            result.error("UPDATE_REJECTED", "Update already running or URL not allowed", null)
+                        }
+                    }
+                    else -> result.notImplemented()
+                }
+            } catch (error: Throwable) {
+                CrashLogStore.append(this, "UPDATER_CHANNEL_ERROR", error.toString())
+                result.error("UPDATER_FAILED", error.message, null)
+            }
+        }
+        updaterChannel = updater
+        AppUpdater.listener = { type, percent, message ->
+            updaterChannel?.invokeMethod(
+                "onUpdateEvent",
+                mapOf("type" to type, "percent" to percent, "message" to message)
+            )
+        }
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
@@ -122,6 +154,8 @@ class MainActivity : FlutterActivity() {
 
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
         remoteChannel = null
+        AppUpdater.listener = null
+        updaterChannel = null
         super.cleanUpFlutterEngine(flutterEngine)
     }
 }

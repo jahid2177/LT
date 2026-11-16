@@ -20,10 +20,25 @@ String stableChannelKey(List<TvChannel> channels, int index) {
   return 'name:$group/$name#$ordinal';
 }
 
+/// All stable keys in one O(n) pass; `result[i] == stableChannelKey(channels, i)`.
+/// Use this for whole-list work (favorites filter, lookups) on slow TV CPUs.
+List<String> stableChannelKeys(List<TvChannel> channels) {
+  final seen = <String, int>{};
+  final keys = <String>[];
+  for (final channel in channels) {
+    final epg = channel.epgId.trim().toLowerCase();
+    final base = epg.isNotEmpty
+        ? 'epg:$epg'
+        : 'name:${channel.group.trim().toLowerCase()}/'
+            '${channel.name.trim().toLowerCase()}';
+    final ordinal = (seen[base] ?? 0) + 1;
+    seen[base] = ordinal;
+    keys.add('$base#$ordinal');
+  }
+  return keys;
+}
+
 int channelIndexForKey(List<TvChannel> channels, String? key) {
   if (key == null || key.isEmpty) return -1;
-  for (var i = 0; i < channels.length; i++) {
-    if (stableChannelKey(channels, i) == key) return i;
-  }
-  return -1;
+  return stableChannelKeys(channels).indexOf(key);
 }
