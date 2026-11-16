@@ -367,10 +367,12 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
           : 'Offline saved GitHub catalog displayed');
     } catch (error, stack) {
       CrashReporter.error('Offline channel fallback', error, stack);
-      if (mounted) setState(() {
-        _loading = false;
-        _sourceError = 'Cannot load GitHub or offline channels: $error';
-      });
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _sourceError = 'Cannot load GitHub or offline channels: $error';
+        });
+      }
     }
   }
 
@@ -407,10 +409,12 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
             _showStartupGuide(_savedIndex(channels));
           }
         }
-        if (mounted) setState(() {
-          _onlineConfirmed = true;
-          _loading = false;
-        });
+        if (mounted) {
+          setState(() {
+            _onlineConfirmed = true;
+            _loading = false;
+          });
+        }
         return;
       }
       final content = result.text;
@@ -444,10 +448,12 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
         }
       }
       CrashReporter.stage('GitHub JSON refresh successful');
-      if (mounted) setState(() {
-        _onlineConfirmed = true;
-        _loading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _onlineConfirmed = true;
+          _loading = false;
+        });
+      }
     } catch (error, stack) {
       CrashReporter.error('GitHub JSON fetch failure', error, stack);
       if (mounted && epoch == _selectionEpoch && url == _playlistUrl) {
