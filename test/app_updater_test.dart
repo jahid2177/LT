@@ -47,4 +47,26 @@ void main() {
       isNull,
     );
   });
+
+  test('release notes are optional, trimmed and length limited', () {
+    final without = AppUpdater.parseManifest(
+      '{"versionCode":13,"versionName":"1.3.0","apkUrl":"$apk"}',
+      installedVersionCode: 12,
+    );
+    expect(without!.notes, '');
+
+    final withNotes = AppUpdater.parseManifest(
+      '{"versionCode":13,"versionName":"1.3.0","apkUrl":"$apk",'
+      '"notes":"  Faster start\\nNew channels  "}',
+      installedVersionCode: 12,
+    );
+    expect(withNotes!.notes, 'Faster start\nNew channels');
+
+    final long = AppUpdater.parseManifest(
+      '{"versionCode":13,"versionName":"1.3.0","apkUrl":"$apk",'
+      '"notes":"${'x' * 2000}"}',
+      installedVersionCode: 12,
+    );
+    expect(long!.notes.length, AppUpdater.maxNotesLength + 1);
+  });
 }
