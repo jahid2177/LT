@@ -1,0 +1,45 @@
+name: Check stream links
+
+# Daily report of dead channel links. It never edits the channel lists:
+# open the run's summary / download the artifact and fix the feed by hand.
+on:
+  schedule:
+    - cron: '23 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Check every channel stream URL
+        run: |
+          python3 tools/check_stream_links.py \
+            --source assets/channels.json \
+            --source https://raw.githubusercontent.com/faria2177/live-tv-channels/refs/heads/main/channels.json \
+            --report stream-link-report.md \
+            --cleaned-dir cleaned
+
+      - name: Show the report in the run summary
+        if: always()
+        run: |
+          if [ -f stream-link-report.md ]; then
+            cat stream-link-report.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload report and cleaned copies
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stream-link-report
+          path: |
+            stream-link-report.md
+            cleaned/
+          if-no-files-found: ignore
+          retention-days: 14
