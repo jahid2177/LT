@@ -39,6 +39,8 @@ class PlaylistRepository {
   static const _etagKey = 'github_channels_etag_v2';
   static const _favoriteIdsKey = 'favorites_channel_identity_v2';
   static const _favoritesKey = 'favorites_v1';
+  static const _recentIdsKey = 'recent_channel_identity_v1';
+  static const _autoResumePendingKey = 'auto_resume_pending_v1';
   static const _maxPlaylistBytes = 5 * 1024 * 1024;
 
   Future<String?> loadText() async {
@@ -83,6 +85,33 @@ class PlaylistRepository {
   Future<void> storeFavoriteIds(Set<String> ids) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setStringList(_favoriteIdsKey, ids.toList());
+  }
+
+  Future<List<String>> loadRecentIds() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getStringList(_recentIdsKey) ?? <String>[];
+  }
+
+  Future<void> storeRecentIds(List<String> ids) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(_recentIdsKey, ids);
+  }
+
+  /// True while an automatic start of the last channel has not yet proved
+  /// itself (played for a while). If the app dies during it, the next launch
+  /// shows the guide instead of starting the same stream again.
+  Future<bool> loadAutoResumePending() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_autoResumePendingKey) ?? false;
+  }
+
+  Future<void> storeAutoResumePending(bool pending) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (pending) {
+      await prefs.setBool(_autoResumePendingKey, true);
+    } else {
+      await prefs.remove(_autoResumePendingKey);
+    }
   }
 
   Future<void> storeLastChannelId(String identity) async {

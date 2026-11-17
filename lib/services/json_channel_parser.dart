@@ -55,7 +55,9 @@ class JsonChannelParser {
       final stream = _findStream(value, baseUri, 0);
       if (stream != null && entryName.trim().isNotEmpty) {
         if (seen.add(stream)) {
+          final backups = _findBackups(value, baseUri, stream);
           result.add(TvChannel(
+            backups: backups,
             name: entryName.trim(),
             url: stream,
             group: effectiveGroup,
@@ -127,6 +129,50 @@ class JsonChannelParser {
       }
     }
     return null;
+  }
+
+  static const _backupKeys = <String>[
+    'backup_urls', 'backupUrls', 'backups', 'backup', 'backup_url', 'backupUrl',
+    'alt_urls', 'altUrls', 'alt_url', 'altUrl', 'alternatives', 'fallback',
+    'fallback_url', 'fallbackUrl', 'fallbacks', 'mirrors', 'mirror',
+  ];
+  static const _multiStreamKeys = <String>[
+    'streams', 'sources', 'urls', 'links', 'qualities',
+  ];
+  static const maxBackups = 5;
+
+  /// Extra playable URLs of one channel entry: explicit backup keys and any
+  /// further URLs inside list-valued stream keys. [primary] is excluded.
+  List<String> _findBackups(
+      Map<String, dynamic> entry, Uri? baseUri, String primary) {
+    final found = <String>[];
+    void add(String? url) {
+      if (url == null || url == primary || found.contains(url)) return;
+      if (found.length < maxBackups) found.add(url);
+    }
+
+    void collect(dynamic node, int depth) {
+      if (depth > 4 || found.length >= maxBackups) return;
+      if (node is String) {
+        add(_validateUrl(node, baseUri));
+      } else if (node is List) {
+        for (final item in node) {
+          collect(item, depth + 1);
+        }
+      } else if (node is Map) {
+        final nested = node.map((key, value) => MapEntry('$key', value));
+        add(_findStream(nested, baseUri, 0));
+      }
+    }
+
+    for (final key in _backupKeys) {
+      if (entry.containsKey(key)) collect(entry[key], 0);
+    }
+    for (final key in _multiStreamKeys) {
+      final value = entry[key];
+      if (value is List) collect(value, 0);
+    }
+    return List<String>.unmodifiable(found);
   }
 
   String? _findStream(Map<String, dynamic> entry, Uri? baseUri, int depth) {

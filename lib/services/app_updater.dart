@@ -12,11 +12,15 @@ class AppUpdateInfo {
     required this.versionCode,
     required this.versionName,
     required this.apkUrl,
+    this.notes = '',
   });
 
   final int versionCode;
   final String versionName;
   final String apkUrl;
+
+  /// Optional "what is new" text from the release (version.json `notes`).
+  final String notes;
 }
 
 /// Self-update from this project's GitHub Releases.
@@ -39,6 +43,7 @@ class AppUpdater {
       'https://github.com/jahid2177/LT/releases/download/';
 
   static const _maxManifestBytes = 64 * 1024;
+  static const maxNotesLength = 600;
 
   /// Returns the update described by [manifestJson], or null when the manifest
   /// is not newer than [installedVersionCode] or is not trustworthy.
@@ -63,7 +68,17 @@ class AppUpdater {
         !apkUrl.toLowerCase().startsWith(allowedApkPrefix.toLowerCase())) {
       return null;
     }
-    return AppUpdateInfo(versionCode: code, versionName: name, apkUrl: apkUrl);
+    final rawNotes = decoded['notes'];
+    var notes = rawNotes is String ? rawNotes.trim() : '';
+    if (notes.length > maxNotesLength) {
+      notes = '${notes.substring(0, maxNotesLength).trimRight()}…';
+    }
+    return AppUpdateInfo(
+      versionCode: code,
+      versionName: name,
+      apkUrl: apkUrl,
+      notes: notes,
+    );
   }
 
   /// Version code of the installed APK, or null outside Android.
