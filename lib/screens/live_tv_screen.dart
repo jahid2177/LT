@@ -11,6 +11,7 @@ import '../services/channel_identity.dart';
 import '../services/playlist_repository.dart';
 import '../services/crash_reporter.dart';
 import '../services/guide_focus_navigation.dart';
+import '../services/playback_policy.dart';
 import '../services/screen_awake_policy.dart';
 import '../services/channel_search.dart';
 import 'playlist_dialog.dart';
@@ -101,6 +102,25 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
   Timer? _infoTimer;
   Timer? _numberTimer;
 
+  // Recently watched list, automatic resume of the last channel, stream
+  // failover / reconnect, and "press BACK again to exit".
+  List<String> _recent = <String>[];
+  bool _recentOnly = false;
+  bool _autoResumeAllowed = false;
+  bool _autoResumeTried = false;
+  bool _autoResumeStarted = false;
+  int _resumeSeconds = 0;
+  Timer? _resumeTimer;
+  int _sourceIndex = 0;
+  int _autoRetries = 0;
+  String? _reconnectNote;
+  Timer? _retryTimer;
+  Timer? _stallTimer;
+  Timer? _stableTimer;
+  DateTime? _lastBackPress;
+  bool _exitHintVisible = false;
+  Timer? _exitHintTimer;
+
   // In-app update from this project's GitHub Releases.
   final _appUpdater = AppUpdater();
   static const _updateCheckInterval = Duration(hours: 6);
@@ -111,16 +131,33 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
   int? _declinedUpdateCode;
   bool _updateBusy = false;
 
-  List<int> get _visibleIndices => searchChannelIndices(
-        _channels,
-        query: _searchQuery,
-        allowedIndices: _favoritesOnly
-            ? <int>{
-                for (var i = 0; i < _channels.length; i++)
-                  if (_favorites.contains(_channelKeys[i])) i,
-              }
-            : null,
-      );
+  List<int> get _visibleIndices => _visibleFor(_channels, _channelKeys);
+
+  /// Channels shown in the guide for [channels]/[keys]: all, favorites only
+  /// or recently watched (newest first), narrowed by the search text.
+  List<int> _visibleFor(List<TvChannel> channels, List<String> keys) {
+    Set<int>? allowed;
+    List<int>? recentOrder;
+    if (_favoritesOnly) {
+      allowed = <int>{
+        for (var i = 0; i < channels.length; i++)
+          if (_favorites.contains(keys[i])) i,
+      };
+    } else if (_recentOnly) {
+      recentOrder = recentChannelIndices(keys, _recent);
+      allowed = recentOrder.toSet();
+    }
+    final matches = searchChannelIndices(
+      channels,
+      query: _searchQuery,
+      allowedIndices: allowed,
+    );
+    if (recentOrder != null) {
+      final order = recentOrder;
+      matches.sort((a, b) => order.indexOf(a).compareTo(order.indexOf(b)));
+    }
+    return matches;
+  }
 
   TvChannel? get _currentChannel =>
       _currentIndex >= 0 && _currentIndex < _channels.length
@@ -198,8 +235,11 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
         barrierDismissible: false,
         builder: (dialogContext) => AlertDialog(
           title: const Text('App update available'),
-          content: Text('Live TV Remote ${update.versionName} is available. '
-              'Download and install it now? Android will ask you to confirm.'),
+          content: SingleChildScrollView(
+            child: Text('Live TV Remote ${update.versionName} is available.'
+                '${update.notes.isEmpty ? '' : '\n\nWhat is new:\n${update.notes}'}'
+                '\n\nDownload and install it now? Android will ask you to confirm.'),
+          ),
           actions: <Widget>[
             TextButton(
               onPressed: () => Navigator.of(dialogContext).pop(false),
@@ -264,6 +304,7 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
 
   Future<dynamic> _handleNativeRemote(MethodCall call) async {
     if (call.method != 'onRemoteKey' || _dialogOpen) return null;
+    _cancelAutoResume();
     switch (call.arguments) {
       case 'channelUp':
         _changeChannel(1);
@@ -295,6 +336,58 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
     });
     _ensureHighlightedVisible();
     _syncScreenAwake();
+    _scheduleAutoResume(preferredIndex);
+  }
+
+  /// Starts the last watched channel a few seconds after the guide appears.
+  /// Any key cancels it. It is skipped when the previous automatic start did
+  /// not survive (crash loop protection) and on a first launch.
+  void _scheduleAutoResume(int index) {
+    if (_autoResumeTried || !_autoResumeAllowed || !mounted) return;
+    final saved = channelIndexForKey(_channels, _preferredId) >= 0 ||
+        (_preferredUrl != null &&
+            _channels.any((channel) => channel.url == _preferredUrl));
+    if (!saved || index < 0 || index >= _channels.length) return;
+    _autoResumeTried = true;
+    _resumeTimer?.cancel();
+    setState(() => _resumeSeconds = 6);
+    _resumeTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted || _dialogOpen || _currentIndex >= 0) {
+        _cancelAutoResume();
+        return;
+      }
+      if (_resumeSeconds > 1) {
+        setState(() => _resumeSeconds--);
+        return;
+      }
+      _cancelAutoResume();
+      _autoResumeStarted = true;
+      unawaited(_saveAutoResumePending(true));
+      _tune(index);
+    });
+  }
+
+  void _cancelAutoResume() {
+    if (_resumeTimer == null && _resumeSeconds == 0) return;
+    _resumeTimer?.cancel();
+    _resumeTimer = null;
+    if (mounted && _resumeSeconds != 0) setState(() => _resumeSeconds = 0);
+  }
+
+  Future<void> _saveAutoResumePending(bool pending) async {
+    try {
+      await _repository.storeAutoResumePending(pending);
+    } catch (error) {
+      debugPrint('Cannot store auto-resume flag: $error');
+    }
+  }
+
+  Future<void> _saveRecent() async {
+    try {
+      await _repository.storeRecentIds(_recent);
+    } catch (error) {
+      debugPrint('Cannot store recent channels: $error');
+    }
   }
 
   /// GitHub wins on every launch: cached or bundled snapshots are displayed
@@ -310,6 +403,10 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
       _preferredId = await _repository.loadLastChannelId();
       _legacyFavoriteUrls = await _repository.loadFavorites();
       _favorites = await _repository.loadFavoriteIds();
+      _recent = await _repository.loadRecentIds();
+      // A start of the last channel that never proved itself (the app died)
+      // is not repeated automatically.
+      _autoResumeAllowed = !(await _repository.loadAutoResumePending());
       if (!mounted) return;
       // Trust only the last successful GitHub catalog, never an imported M3U
       // or an embedded snapshot saved by an older application version.
@@ -497,16 +594,7 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
     final migratedHighlight = highlightIndex >= 0 ? highlightIndex :
         selection.channels.indexWhere((e) => e.url == oldHighlightUrl);
     final matchedKey = matchingIndex >= 0 ? newKeys[matchingIndex] : null;
-    final newVisible = searchChannelIndices(
-      selection.channels,
-      query: _searchQuery,
-      allowedIndices: _favoritesOnly
-          ? <int>{
-              for (var i = 0; i < selection.channels.length; i++)
-                if (_favorites.contains(newKeys[i])) i,
-            }
-          : null,
-    );
+    final newVisible = _visibleFor(selection.channels, newKeys);
     final nextHighlight = newVisible.indexOf(migratedHighlight);
 
     setState(() {
@@ -535,6 +623,7 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
         }
       } else {
         _favoritesOnly = false;
+        _recentOnly = false;
         _drawerVisible = false;
       }
     });
@@ -603,11 +692,18 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
     }
   }
 
-  void _tune(int target) {
+  void _tune(int target, {bool isRetry = false}) {
     if (!mounted || target < 0 || target >= _channels.length) return;
     CrashReporter.stage('Tuning channel ${target + 1} (without URL)');
     final generation = ++_playbackGeneration;
     _numberTimer?.cancel();
+    _retryTimer?.cancel();
+    _stallTimer?.cancel();
+    _stallTimer = null;
+    _stableTimer?.cancel();
+    _cancelAutoResume();
+    _sourceIndex = 0;
+    if (!isRetry) _autoRetries = 0;
     final item = _channels[target];
     final uri = Uri.tryParse(item.url);
     setState(() {
@@ -617,12 +713,15 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
       _playerLoading = true;
       _drawerVisible = false;
       _numberBuffer = '';
+      if (!isRetry) _reconnectNote = null;
     });
     _syncScreenAwake(); // Keep TV on while the stream loads, even before video frames arrive.
     final identity = stableChannelKey(_channels, target);
     _preferredId = identity;
     _preferredUrl = item.url;
     unawaited(_saveLastChannel(item.url, identity));
+    _recent = pushRecentChannel(_recent, identity);
+    unawaited(_saveRecent());
     _showInfo();
     if (uri == null || !uri.hasScheme ||
         (uri.scheme != 'https' && uri.scheme != 'http')) {
@@ -669,6 +768,7 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
     if (!mounted || generation != _playbackGeneration) return;
     VideoPlayerController? next;
     var ready = false;
+    var failed = false;
     try {
       final isHls = uri.path.toLowerCase().endsWith('.m3u8');
       final player = VideoPlayerController.networkUrl(
@@ -679,13 +779,31 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
       next = player;
       _activePlayer = player;
       player.addListener(() {
-        if (!mounted || generation != _playbackGeneration) return;
-        if (player.value.hasError && _playerError == null) {
-          setState(() {
-            _playerError = player.value.errorDescription ?? 'Stream playback error.';
-            _playerLoading = false;
+        if (!mounted || failed || generation != _playbackGeneration ||
+            !identical(_activePlayer, player)) {
+          return;
+        }
+        final value = player.value;
+        if (value.hasError) {
+          failed = true;
+          _failOver(generation, value.errorDescription ?? 'Stream playback error.');
+          return;
+        }
+        if (!ready) return;
+        // A stream that keeps buffering for 20 s is treated as broken.
+        if (value.isBuffering) {
+          _stallTimer ??= Timer(const Duration(seconds: 20), () {
+            _stallTimer = null;
+            if (!mounted || failed || generation != _playbackGeneration ||
+                !identical(_activePlayer, player)) {
+              return;
+            }
+            failed = true;
+            _failOver(generation, 'The stream stopped delivering video.');
           });
-          _syncScreenAwake();
+        } else {
+          _stallTimer?.cancel();
+          _stallTimer = null;
         }
       });
       await player.initialize().timeout(const Duration(seconds: 20));
@@ -693,21 +811,20 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
       setState(() {
         _controller = next;
         _playerLoading = false;
+        _reconnectNote = null;
       });
       _syncScreenAwake();
       await player.play();
       ready = true;
+      _markPlaybackHealthy(generation);
       CrashReporter.stage('Native video player playback started');
     } catch (error, trace) {
       CrashReporter.error('Video player failure', error, trace);
       debugPrint('TV playback error: $error\n$trace');
-      if (mounted && generation == _playbackGeneration) {
-        setState(() {
-          _playerError = 'Playback failed. Check the stream URL/TV codec.\n$error';
-          _playerLoading = false;
-          _controller = null;
-        });
-        _syncScreenAwake();
+      if (mounted && generation == _playbackGeneration && !failed) {
+        failed = true;
+        _failOver(generation,
+            'Playback failed. Check the stream URL/TV codec.\n$error');
       }
     } finally {
       if (!ready && next != null) {
@@ -718,6 +835,90 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
           debugPrint('Failed to release unusable TV player: $error');
         }
       }
+    }
+  }
+
+  /// After 30 s of playback the stream is considered healthy: the reconnect
+  /// budget is refilled and an automatic start counts as survived.
+  void _markPlaybackHealthy(int generation) {
+    _stableTimer?.cancel();
+    _stableTimer = Timer(const Duration(seconds: 30), () {
+      if (!mounted || generation != _playbackGeneration) return;
+      _autoRetries = 0;
+      if (_autoResumeStarted) {
+        _autoResumeStarted = false;
+        unawaited(_saveAutoResumePending(false));
+      }
+    });
+  }
+
+  /// The current stream failed: try the channel's next backup URL, then
+  /// reconnect to the channel a few times, and only then show the error.
+  void _failOver(int generation, String message) {
+    if (!mounted || generation != _playbackGeneration) return;
+    final channel = _currentChannel;
+    if (channel == null) return;
+    _stallTimer?.cancel();
+    _stallTimer = null;
+    _stableTimer?.cancel();
+    switch (nextFailoverAction(channel, _sourceIndex, _autoRetries)) {
+      case FailoverAction.nextSource:
+        {
+        _sourceIndex++;
+        final uri = Uri.tryParse(channel.sources[_sourceIndex]);
+        if (uri == null || !uri.hasScheme ||
+            (uri.scheme != 'https' && uri.scheme != 'http')) {
+          _failOver(generation, message);
+          return;
+        }
+        setState(() {
+          _controller = null;
+          _playerError = null;
+          _playerLoading = true;
+          _reconnectNote = 'Trying backup stream '
+              '${_sourceIndex + 1}/${channel.sources.length}…';
+        });
+        _syncScreenAwake();
+        _playbackTask = _playbackTask
+            .catchError((Object error, StackTrace trace) {
+              debugPrint('Player queue recovered: $error');
+            })
+            .then((_) => _startPlaybackSerial(uri, generation));
+        }
+        break;
+      case FailoverAction.retrySameChannel:
+        {
+        _autoRetries++;
+        final delay = autoRetryDelay(_autoRetries) ?? const Duration(seconds: 15);
+        setState(() {
+          _controller = null;
+          _playerError = null;
+          _playerLoading = true;
+          _reconnectNote = 'Connection lost. Reconnecting… '
+              '($_autoRetries/$maxAutoRetries)';
+        });
+        _syncScreenAwake();
+        _queuePlayerCleanup();
+        _retryTimer?.cancel();
+        _retryTimer = Timer(delay, () {
+          if (!mounted || generation != _playbackGeneration ||
+              _currentIndex < 0) {
+            return;
+          }
+          _tune(_currentIndex, isRetry: true);
+        });
+        }
+        break;
+      case FailoverAction.giveUp:
+        setState(() {
+          _playerError = message;
+          _playerLoading = false;
+          _controller = null;
+          _reconnectNote = null;
+        });
+        _syncScreenAwake();
+        _queuePlayerCleanup();
+        break;
     }
   }
 
@@ -797,9 +998,17 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
     }
   }
 
+  /// Star icon: all channels → favorites → recently watched → all channels.
   void _toggleFilter() {
     setState(() {
-      _favoritesOnly = !_favoritesOnly;
+      if (!_favoritesOnly && !_recentOnly) {
+        _favoritesOnly = true;
+      } else if (_favoritesOnly) {
+        _favoritesOnly = false;
+        _recentOnly = true;
+      } else {
+        _recentOnly = false;
+      }
       _highlightIndex = 0;
     });
     if (_visibleIndices.isEmpty) {
@@ -833,18 +1042,39 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
     _focus.requestFocus();
   }
 
-  void _onBack() {
+  /// BACK closes the guide; on the playing screen the first press shows
+  /// "Press BACK again to exit" and a second press within 2 s leaves the app.
+  /// A keyboard Backspace ([allowExit] false) never exits.
+  void _onBack({bool allowExit = true}) {
+    _cancelAutoResume();
     if (_searchFocus.hasFocus) {
       _finishSearchEditing();
       return;
     }
     if (_drawerVisible) {
       setState(() => _drawerVisible = false);
-    } else if (_infoVisible) {
-      setState(() => _infoVisible = false);
-    } else {
-      _openDrawer();
+      _focus.requestFocus();
+      return;
     }
+    if (!allowExit) {
+      setState(() => _infoVisible = false);
+      _focus.requestFocus();
+      return;
+    }
+    final now = DateTime.now();
+    if (shouldExitOnBack(_lastBackPress, now)) {
+      unawaited(SystemNavigator.pop());
+      return;
+    }
+    _lastBackPress = now;
+    _exitHintTimer?.cancel();
+    setState(() {
+      _infoVisible = false;
+      _exitHintVisible = true;
+    });
+    _exitHintTimer = Timer(const Duration(seconds: 2), () {
+      if (mounted) setState(() => _exitHintVisible = false);
+    });
     _focus.requestFocus();
   }
 
@@ -906,6 +1136,17 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
   }
 
   void _onSelect() {
+    // OK after typing a channel number jumps there immediately.
+    if (_numberBuffer.isNotEmpty) {
+      final number = int.tryParse(_numberBuffer);
+      _numberTimer?.cancel();
+      if (number != null && number > 0 && number <= _channels.length) {
+        _tune(number - 1);
+      } else {
+        setState(() => _numberBuffer = '');
+      }
+      return;
+    }
     // The on-screen Retry button cannot be reached with a D-pad, so OK on a
     // failed stream retries it. LEFT / BACK / MENU still open the guide.
     if (!_drawerVisible && _playerError != null && _currentIndex >= 0) {
@@ -954,6 +1195,11 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
 
   KeyEventResult _handleKey(FocusNode node, KeyEvent event) {
     if (_dialogOpen || event is! KeyDownEvent) return KeyEventResult.ignored;
+    if (_resumeTimer != null) {
+      // First key press only cancels the automatic start of the last channel.
+      _cancelAutoResume();
+      return KeyEventResult.handled;
+    }
     final key = event.logicalKey;
     // While the TV IME is active the TextField must receive typing, arrows,
     // deletion and OK. Otherwise the global remote handler would switch TV
@@ -993,9 +1239,10 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
         key == LogicalKeyboardKey.space) {
       _onSelect();
     } else if (key == LogicalKeyboardKey.escape ||
-        key == LogicalKeyboardKey.goBack ||
-        key == LogicalKeyboardKey.backspace) {
+        key == LogicalKeyboardKey.goBack) {
       _onBack();
+    } else if (key == LogicalKeyboardKey.backspace) {
+      _onBack(allowExit: false);
     } else if (key == LogicalKeyboardKey.keyF) {
       _toggleFavorites();
     } else if (key == LogicalKeyboardKey.keyM) {
@@ -1018,6 +1265,11 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
     _appUpdater.setEventHandler(null);
     _infoTimer?.cancel();
     _numberTimer?.cancel();
+    _resumeTimer?.cancel();
+    _retryTimer?.cancel();
+    _stallTimer?.cancel();
+    _stableTimer?.cancel();
+    _exitHintTimer?.cancel();
     _playbackGeneration++;
     unawaited(_requestScreenAwake(false));
     _remote.setMethodCallHandler(null);
@@ -1078,18 +1330,58 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
                       ),
                       child: Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
-                        child: Text('Channel $_numberBuffer',
+                        child: Text(_numberOverlayText(),
                             style: const TextStyle(fontSize: 30, fontWeight: FontWeight.bold)),
                       ),
                     ),
                   ),
                 ),
+              if (_reconnectNote != null && _playerError == null)
+                _toast(_reconnectNote!, Alignment.bottomCenter),
+              if (_resumeSeconds > 0 && _channels.isNotEmpty)
+                _toast('Resuming ${_resumeChannelName()} in $_resumeSeconds s'
+                    ' — press any key to cancel', Alignment.bottomRight),
+              if (_exitHintVisible)
+                _toast('Press BACK again to exit', Alignment.bottomCenter),
             ],
           ),
         ),
       ),
     );
   }
+
+  String _numberOverlayText() {
+    final number = int.tryParse(_numberBuffer);
+    if (number != null && number > 0 && number <= _channels.length) {
+      return 'Channel $_numberBuffer  •  ${_channels[number - 1].name}';
+    }
+    return 'Channel $_numberBuffer';
+  }
+
+  String _resumeChannelName() {
+    var index = channelIndexForKey(_channels, _preferredId);
+    if (index < 0) index = _channels.indexWhere((c) => c.url == _preferredUrl);
+    return index < 0 ? 'last channel' : _channels[index].name;
+  }
+
+  Widget _toast(String text, Alignment alignment) => IgnorePointer(
+        child: Align(
+          alignment: alignment,
+          child: Padding(
+            padding: const EdgeInsets.all(22),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: const Color(0xF0202540),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+                child: Text(text, style: const TextStyle(fontSize: 16)),
+              ),
+            ),
+          ),
+        ),
+      );
 
   Widget _buildPlayer() {
     if (_loading) {
@@ -1415,8 +1707,12 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
             child: Row(children: <Widget>[
               _guideAction(
                 index: 0,
-                icon: _favoritesOnly ? Icons.star : Icons.star_border,
-                label: _favoritesOnly ? 'Show all channels' : 'Favorites only',
+                icon: _favoritesOnly
+                    ? Icons.star
+                    : _recentOnly ? Icons.history : Icons.star_border,
+                label: _favoritesOnly
+                    ? 'Show recently watched'
+                    : _recentOnly ? 'Show all channels' : 'Favorites only',
                 onPressed: _toggleFilter,
               ),
               _guideAction(
@@ -1514,6 +1810,7 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
                   : _searchQuery.trim().isNotEmpty
                     ? '${indices.length} results for “${_searchQuery.trim()}”'
                   : _favoritesOnly ? '${indices.length} favorites'
+                  : _recentOnly ? '${indices.length} recently watched'
                   : _playlistUrl == PlaylistRepository.defaultChannelsUrl
                     ? '${indices.length} channels • ${_onlineConfirmed ? 'GitHub synced' : 'saved copy • syncing'} • auto-refresh 2 min'
                     : '${indices.length} channels • custom playlist',
@@ -1529,7 +1826,9 @@ class _LiveTvScreenState extends State<LiveTvScreen> with WidgetsBindingObserver
                     child: Text(
                       _searchQuery.trim().isNotEmpty
                           ? 'No channels match your search. Select Search and clear the text.'
-                          : 'No favorites yet. Use the star icon at the top to show all.',
+                          : _recentOnly
+                              ? 'Nothing watched yet. Use the star icon at the top to show all.'
+                              : 'No favorites yet. Use the star icon at the top to show all.',
                       textAlign: TextAlign.center),
                   ))
                 : ListView.builder(
