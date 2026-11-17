@@ -8,6 +8,7 @@ class TvChannel {
     this.group = 'Other',
     this.logo = '',
     this.epgId = '',
+    this.backups = const <String>[],
   });
 
   final String name;
@@ -15,4 +16,11 @@ class TvChannel {
   final String group;
   final String logo;
   final String epgId;
+
+  /// Alternative stream URLs for the same channel. The player tries them in
+  /// order when [url] does not start or breaks.
+  final List<String> backups;
+
+  /// [url] followed by every backup, without duplicates.
+  List<String> get sources => <String>[url, ...backups];
 }
