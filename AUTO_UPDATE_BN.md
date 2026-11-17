@@ -40,3 +40,21 @@ keystore ফাইল ও পাসওয়ার্ডের একটি ক�
 - Custom playlist আর সংরক্ষিত GitHub অফলাইন কপি মুছে দেয় না।
 - Favorites তালিকার হিসাব দ্রুত করা হয়েছে; অব্যবহৃত `TvHomeActivity.kt` সরানো হয়েছে।
 - Flutter ভার্সন 3.47.7-এ pin করা হয়েছে।
+
+## Run workflow থেকে নতুন ভার্সন প্রকাশ (v1.3.0 থেকে)
+
+GitHub → **Actions → Android TV APK → Run workflow** (branch: `main`):
+
+- **version**: যেমন `1.3.1`। ফাঁকা রাখলে `pubspec.yaml`-এর ভার্সন ব্যবহার হয়।
+- **build_number**: ফাঁকা রাখুন; সর্বশেষ Release-এর build + 1 নিজে বসবে।
+- **notes**: ঐচ্ছিক। টিভিতে আপডেট ডায়ালগে "What is new" হিসেবে দেখায় (সর্বোচ্চ ৬০০ অক্ষর)।
+
+ওই ভার্সনের Release আগে থেকে থাকলে workflow error দেয়।
+
+## মৃত লিংকের রিপোর্ট
+
+**Actions → Check stream links** প্রতিদিন নিজে চলে (চাইলে Run workflow দিয়েও চালানো যায়)।
+bundled `assets/channels.json` ও GitHub-এর `faria2177/live-tv-channels` ফিড দুটোই পরীক্ষা করে।
+রিপোর্ট run-এর Summary-তে দেখা যায়। **কিছু নিজে মোছে না।** "Uncertain" মানে
+timeout/403/5xx; GitHub-এর সার্ভারের অঞ্চল-নিষেধাজ্ঞার কারণেও হতে পারে, তাই যাচাই করে মুছুন।
+`stream-link-report` artifact-এ মৃত চ্যানেল বাদ দেওয়া একটা কপিও থাকে।
