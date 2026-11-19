@@ -1,4 +1,9 @@
 include: package:flutter_lints/flutter.yaml
 analyzer:
+  # The Windows entry point uses packages that are added only by the
+  # Windows build workflow (video_player_media_kit, media_kit_libs_windows_video),
+  # so the Android analysis must skip it.
+  exclude:
+    - windows_app/**
   errors:
     invalid_annotation_target: ignore
