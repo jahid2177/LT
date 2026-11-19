@@ -1,0 +1,150 @@
+name: Windows EXE
+
+# Builds the Windows (x64) version of Live TV Remote:
+#   * LiveTVRemote-Setup-<version>.exe  – installer (Start menu + desktop icon)
+#   * LiveTVRemote-Windows-x64-<version>.zip – portable, unzip and run LiveTVRemote.exe
+#
+# Runs automatically after every successful "Android TV APK" run on main, and
+# can be started by hand from Actions > Windows EXE > Run workflow.
+# If a GitHub Release exists for the same commit/version, both files are
+# attached to it as well.
+
+on:
+  workflow_run:
+    workflows: ['Android TV APK']
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-exe-${{ github.event.workflow_run.head_sha || github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      BUILD_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+      GH_TOKEN: ${{ github.token }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ env.BUILD_SHA }}
+
+      # The Android run may have published the release with a version typed
+      # into "Run workflow" (not committed). Use that same version for the EXE.
+      - name: Match version with the GitHub Release of this commit
+        run: |
+          TAG="$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=30" \
+            --jq ".[] | select(.target_commitish == \"$BUILD_SHA\") | .tag_name" | head -1 || true)"
+          if [ -n "$TAG" ]; then
+            gh release download "$TAG" --pattern version.json --output version.json || true
+          fi
+          if [ -f version.json ]; then
+            NAME="$(python -c 'import json; print(json.load(open("version.json"))["versionName"])')"
+            CODE="$(python -c 'import json; print(json.load(open("version.json"))["versionCode"])')"
+            sed -i "s/^version:.*/version: $NAME+$CODE/" pubspec.yaml
+            rm -f version.json
+          else
+            # No release for this commit: attach to an existing release of the
+            # pubspec version, if there is one.
+            V="$(grep -m1 '^version:' pubspec.yaml | sed 's/^version:[[:space:]]*//' | tr -d '[:space:]')"
+            if gh release view "v${V%%+*}" >/dev/null 2>&1; then TAG="v${V%%+*}"; fi
+          fi
+          VERSION_LINE="$(grep -m1 '^version:' pubspec.yaml | sed 's/^version:[[:space:]]*//' | tr -d '[:space:]')"
+          echo "APP_VERSION=${VERSION_LINE%%+*}" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=$TAG" >> "$GITHUB_ENV"
+          echo "Version: $VERSION_LINE   Release: ${TAG:-none}"
+
+      - name: Flutter stable
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.47.7
+          cache: true
+
+      - name: Generate Flutter Windows runner
+        run: |
+          flutter config --enable-windows-desktop
+          flutter create --platforms=windows --project-name=live_tv_remote --org=com.example --no-pub .
+          python -m pip install --disable-pip-version-check --quiet pillow
+          python windows_app/prepare_windows.py
+
+      # Windows-only packages: libmpv video backend for package:video_player
+      # (the official plugin has no Windows support) and dart:ffi helpers.
+      # They are added only here, so the Android build stays exactly as before.
+      - name: Add Windows video backend
+        run: |
+          flutter pub add video_player_media_kit media_kit_libs_windows_video ffi
+          flutter pub get
+
+      - name: Dart analysis of the Windows entry point
+        run: |
+          sed -i '/windows_app\/\*\*/d' analysis_options.yaml
+          flutter analyze --no-fatal-infos --no-fatal-warnings windows_app/main_windows.dart lib
+
+      - name: Build Windows release
+        run: flutter build windows --release -t windows_app/main_windows.dart
+
+      - name: Bundle Visual C++ runtime next to the exe
+        run: |
+          OUT=build/windows/x64/runner/Release
+          for dll in msvcp140.dll vcruntime140.dll vcruntime140_1.dll; do
+            cp "/c/Windows/System32/$dll" "$OUT/" && echo "added $dll"
+          done
+          ls -la "$OUT"
+          test -f "$OUT/LiveTVRemote.exe"
+
+      - name: Portable ZIP
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Compress-Archive -Path build/windows/x64/runner/Release/* `
+            -DestinationPath "dist/LiveTVRemote-Windows-x64-$env:APP_VERSION.zip" -Force
+
+      - name: Installer (Inno Setup)
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup -y --no-progress | Out-Null
+          }
+          & $iscc `
+            "/DAppVersion=$env:APP_VERSION" `
+            "/DSourceDir=$PWD\build\windows\x64\runner\Release" `
+            "/DOutputDir=$PWD\dist" `
+            "/DIconFile=$PWD\windows\runner\resources\app_icon.ico" `
+            windows_app\installer.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-ChildItem dist
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: LiveTVRemote-Windows-Setup
+          path: dist/LiveTVRemote-Setup-*.exe
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload portable ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: LiveTVRemote-Windows-x64-Portable
+          path: dist/LiveTVRemote-Windows-x64-*.zip
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Attach to the GitHub Release
+        if: env.RELEASE_TAG != ''
+        run: |
+          gh release upload "$RELEASE_TAG" dist/LiveTVRemote-Setup-*.exe \
+            dist/LiveTVRemote-Windows-x64-*.zip --clobber
