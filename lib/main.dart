@@ -7,10 +7,20 @@ import 'package:flutter/services.dart';
 import 'screens/live_tv_screen.dart';
 import 'services/crash_reporter.dart';
 
-void main() {
+void main() => runLiveTvApp();
+
+/// Shared start-up for every platform.
+///
+/// Android uses the defaults. The Windows entry point
+/// (`windows_app/main_windows.dart`) passes its own [ensureBinding] and a
+/// [beforeRunApp] hook that registers the Windows video backend.
+void runLiveTvApp({
+  WidgetsBinding Function()? ensureBinding,
+  void Function()? beforeRunApp,
+}) {
   // Bind inside the same zone used to run the app, avoiding zone mismatch.
   runZonedGuarded(() {
-    WidgetsFlutterBinding.ensureInitialized();
+    (ensureBinding ?? WidgetsFlutterBinding.ensureInitialized)();
     FlutterError.onError = (FlutterErrorDetails details) {
       FlutterError.presentError(details);
       CrashReporter.error('FlutterError', details.exception, details.stack);
@@ -19,6 +29,7 @@ void main() {
       CrashReporter.error('Uncaught platform/Dart error', error, stack);
       return true; // We recorded the error; do not terminate for Dart exceptions.
     };
+    beforeRunApp?.call();
     CrashReporter.stage('Dart main reached');
     runApp(const LiveTvApp());
     WidgetsBinding.instance.addPostFrameCallback((_) {
